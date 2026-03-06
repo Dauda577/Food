@@ -117,7 +117,7 @@ const Categories = () => {
   });
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]} edges={["top"]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]} edges={["left","right","bottom"]}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[styles.scroll, { backgroundColor: theme.backgroundColor }]}>
         
         {searchQuery === "" && activeFilter === "All" && (
@@ -170,43 +170,35 @@ const Categories = () => {
           <Text style={[styles.countLabel, { color: theme.textColor }]}>{filtered.length} found</Text>
         </View>
 
-        {filtered.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyEmoji}>🔍</Text>
-            <Text style={[styles.emptyTitle, { color: theme.textColor }]}>Nothing found</Text>
-            <Text style={[styles.emptySub, { color: theme.textColor }]}>Try a different search or filter</Text>
-          </View>
-        ) : (
-          <View style={styles.grid}>
-            {filtered.map((cat) => (
-              <TouchableOpacity key={cat.id} style={[styles.card, { backgroundColor: theme.cardBackground }]}>
-                <View style={styles.cardTop}>
-                  <View style={[styles.emojiWrap, { backgroundColor: cat.accent + "22" }]}>
-                    <Text style={styles.cardEmoji}>{cat.emoji}</Text>
-                  </View>
-                  <View style={[styles.tagPill, { backgroundColor: cat.accent + "18" }]}>
-                    <Text style={[styles.tagText, { color: cat.accent }]}>{cat.tag}</Text>
-                  </View>
+        <View style={styles.grid}>
+          {filtered.map((cat) => (
+            <TouchableOpacity key={cat.id} style={[styles.card, { backgroundColor: theme.cardBackground }]}>
+              <View style={styles.cardTop}>
+                <View style={[styles.emojiWrap, { backgroundColor: cat.accent + "22" }]}>
+                  <Text style={styles.cardEmoji}>{cat.emoji}</Text>
                 </View>
-
-                <Image source={{ uri: cat.image }} style={styles.cardImage} resizeMode="cover" />
-
-                <Text style={[styles.cardName, { color: theme.textColor }]}>{cat.name}</Text>
-                <Text style={[styles.cardCount, { color: theme.textColor }]}>{cat.count} items</Text>
-
-                <View style={styles.cardFooter}>
-                  <View style={styles.timeRow}>
-                    <Clock size={10} color={theme.textColor} />
-                    <Text style={[styles.timeText, { color: theme.textColor }]}>{cat.time}</Text>
-                  </View>
-                  <View style={[styles.arrowBtn, { backgroundColor: cat.accent }]}>
-                    <ChevronRight size={13} color="#fff" />
-                  </View>
+                <View style={[styles.tagPill, { backgroundColor: cat.accent + "18" }]}>
+                  <Text style={[styles.tagText, { color: cat.accent }]}>{cat.tag}</Text>
                 </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
+              </View>
+
+              <Image source={{ uri: cat.image }} style={styles.cardImage} resizeMode="cover" />
+
+              <Text style={[styles.cardName, { color: theme.textColor }]}>{cat.name}</Text>
+              <Text style={[styles.cardCount, { color: theme.textColor }]}>{cat.count} items</Text>
+
+              <View style={styles.cardFooter}>
+                <View style={styles.timeRow}>
+                  <Clock size={10} color={theme.textColor} />
+                  <Text style={[styles.timeText, { color: theme.textColor }]}>{cat.time}</Text>
+                </View>
+                <View style={[styles.arrowBtn, { backgroundColor: cat.accent }]}>
+                  <ChevronRight size={13} color="#fff" />
+                </View>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
 
         <View style={{ height: 100 }} />
       </ScrollView>
@@ -223,7 +215,7 @@ const styles = StyleSheet.create({
   sectionHeader: {
     flexDirection: "row", justifyContent: "space-between",
     alignItems: "center", paddingHorizontal: 20,
-    marginBottom: 14,
+    marginBottom: 5, marginTop: 20,
   },
   sectionTitle: { fontSize: 17, fontWeight: "800", letterSpacing: -0.3 },
   seeAllBtn: { flexDirection: "row", alignItems: "center", gap: 2 },
@@ -232,7 +224,7 @@ const styles = StyleSheet.create({
 
   featuredRow: { paddingLeft: 20 },
   featuredCard: {
-    width: 230, height: 140, borderRadius: 20,
+    width: 230, height: 150, borderRadius: 20,
     padding: 16, marginRight: 12, overflow: "hidden",
     justifyContent: "space-between",
   },
