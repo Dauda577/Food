@@ -1,541 +1,311 @@
-// app/index.tsx
-import { StyleSheet, Text, View, Image, ScrollView, TouchableOpacity, Dimensions } from "react-native";
-import React, { useState, useEffect, useRef } from "react";
-import { Heart, Star, Plus, ChevronRight, Flame } from "lucide-react-native";
+import React, { useState } from "react";
+import {
+  View, Text, ScrollView, FlatList, TouchableOpacity,
+  StyleSheet, Dimensions, Image, StatusBar,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from '../../context/ThemeContext';
-import { Stack } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { useProducts, Product } from "../../context/ProductsContext";
+import { useWishlist } from "../../context/WishlistContext";
+import { useCart } from "../../context/CartContext";
+import { useAuth } from "../../context/AuthContext";
+import { ProductGridSkeleton, BannerSkeleton, CategoryPillsSkeleton } from "../../components/Skeletons";
 
 const { width } = Dimensions.get("window");
+const CARD_WIDTH = (width - 48) / 2;
 
-const Index = () => {
-  const [activeSlide, setActiveSlide] = useState(0);
-  const [activeCategory, setActiveCategory] = useState(1);
-  const [favorites, setFavorites] = useState<{ [key: number]: boolean }>({});
-  const scrollViewRef = useRef<ScrollView>(null);
-  const { theme } = useTheme();
+const CATEGORIES = [
+  { id: "Electronics", name: "Electronics", icon: "💻", color: "#EEF2FF" },
+  { id: "Fashion",     name: "Fashion",     icon: "👕", color: "#FFF7ED" },
+  { id: "Food",        name: "Food",        icon: "🍔", color: "#FFF1F2" },
+  { id: "Beauty",      name: "Beauty",      icon: "💄", color: "#FDF4FF" },
+  { id: "Sports",      name: "Sports",      icon: "⚽", color: "#F0FDF4" },
+  { id: "Home",        name: "Home",        icon: "🏠", color: "#FFFBEB" },
+  { id: "Computing",   name: "Computing",   icon: "💻", color: "#EFF6FF" },
+];
 
-  const carouselItems = [
-    {
-      id: 1,
-      title: "Our Best Seller!",
-      subtitle: "Loved by thousands,\nnow it's your turn!",
-      image: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=500&q=60",
-      bg: "#FF6B35",
-    },
-    {
-      id: 2,
-      title: "Pizza Special!",
-      subtitle: "Fresh ingredients,\nauthentic taste!",
-      image: "https://images.unsplash.com/photo-1604382354936-07c5d9983bd3?auto=format&fit=crop&w=500&q=60",
-      bg: "#E63946",
-    },
-    {
-      id: 3,
-      title: "Chicken Delight!",
-      subtitle: "Crispy and delicious\nevery time!",
-      image: "https://images.unsplash.com/photo-1626082927389-6cd097cda1ec?auto=format&fit=crop&w=500&q=60",
-      bg: "#2D6A4F",
-    },
-    {
-      id: 4,
-      title: "Salad Fresh!",
-      subtitle: "Healthy and tasty\noptions await!",
-      image: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=500&q=60",
-      bg: "#457B9D",
-    },
-  ];
+const BANNERS = [
+  { id: "1", title: "Up to 50% Off",  subtitle: "Electronics Sale",    color: "#1a1a2e", accent: "#e94560", emoji: "📱" },
+  { id: "2", title: "Free Delivery",  subtitle: "On orders over $200", color: "#0f3460", accent: "#ffd460", emoji: "🚚" },
+  { id: "3", title: "New Arrivals",   subtitle: "Fashion & Footwear",  color: "#533483", accent: "#e8d5b7", emoji: "👟" },
+];
 
-  const popularMeals = [
-    {
-      id: 1,
-      name: "Jumbo Burger",
-      description: "Beef patty, cheddar, caramelized onions & house sauce.",
-      rating: 4.8,
-      reviews: 320,
-      price: 5900,
-      image: "https://images.unsplash.com/photo-1551782450-17144efb9c50?auto=format&fit=crop&w=500&q=60",
-    },
-    {
-      id: 2,
-      name: "Margherita Pizza",
-      description: "Classic tomato sauce, fresh mozzarella & basil leaves.",
-      rating: 4.7,
-      reviews: 210,
-      price: 5900,
-      image: "https://images.unsplash.com/photo-1604382354936-07c5d9983bd3?auto=format&fit=crop&w=500&q=60",
-    },
-  ];
+const BADGE_COLORS: Record<string, { bg: string; text: string }> = {
+  New:  { bg: "#dcfce7", text: "#16a34a" },
+  Sale: { bg: "#fee2e2", text: "#dc2626" },
+  Hot:  { bg: "#ffedd5", text: "#ea580c" },
+};
 
-  const categories = [
-    { id: 1, name: "All",     icon: "https://cdn-icons-png.flaticon.com/512/1046/1046784.png" },
-    { id: 2, name: "Burger",  icon: "https://cdn-icons-png.flaticon.com/512/3075/3075977.png" },
-    { id: 3, name: "Pizza",   icon: "https://cdn-icons-png.flaticon.com/512/1404/1404945.png" },
-    { id: 4, name: "Chicken", icon: "https://cdn-icons-png.flaticon.com/512/1046/1046751.png" },
-    { id: 5, name: "Salad",   icon: "https://cdn-icons-png.flaticon.com/512/2515/2515183.png" },
-  ];
+const getGreeting = () => {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+};
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setActiveSlide((prev) => {
-        const next = (prev + 1) % carouselItems.length;
-        scrollViewRef.current?.scrollTo({ x: next * 340, animated: true });
-        return next;
-      });
-    }, 4000);
-    return () => clearInterval(interval);
-  }, []);
+// ── Banner ────────────────────────────────────────────────────────────────────
+const Banner = ({ item }: { item: typeof BANNERS[0] }) => (
+  <View style={[styles.banner, { backgroundColor: item.color }]}>
+    <View style={styles.bannerContent}>
+      <Text style={[styles.bannerSubtitle, { color: item.accent }]}>{item.subtitle}</Text>
+      <Text style={styles.bannerTitle}>{item.title}</Text>
+      <TouchableOpacity style={[styles.bannerBtn, { backgroundColor: item.accent }]}>
+        <Text style={[styles.bannerBtnText, { color: item.color }]}>Shop Now</Text>
+      </TouchableOpacity>
+    </View>
+    <Text style={styles.bannerEmoji}>{item.emoji}</Text>
+  </View>
+);
 
-  const handleScroll = (e: any) => {
-    const slide = Math.round(e.nativeEvent.contentOffset.x / 340);
-    setActiveSlide(slide);
-  };
-
-  const toggleFavorite = (id: number) => {
-    setFavorites((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
+// ── Product card ──────────────────────────────────────────────────────────────
+const ProductCard = ({ product }: { product: Product }) => {
+  const router = useRouter();
+  const { addToCart } = useCart();
+  const { isWishlisted, toggleWishlist } = useWishlist();
+  const wishlisted = isWishlisted(product.id);
+  const discount   = product.original_price
+    ? Math.round((1 - product.price / product.original_price) * 100)
+    : null;
 
   return (
-    <>
-      <Stack.Screen
-        options={{
-          headerStyle: { backgroundColor: '#f97316' },
-          headerTransparent: false,
-          headerTitle: "FoodieHub",
-          headerTitleStyle: {
-            fontSize: 22,
-            fontWeight: "800",
-            color: "#fff",
-          },
-          headerLeft: () => (
-            <TouchableOpacity style={styles.headerButton}>
-              <Ionicons name="person-circle-outline" size={28} color="#fff" />
-            </TouchableOpacity>
-          ),
-          headerRight: () => (
-            <TouchableOpacity style={styles.headerButton}>
-              <Ionicons name="notifications-outline" size={24} color="#fff" />
-            </TouchableOpacity>
-          ),
-        }}
-      />
+    <TouchableOpacity
+      style={styles.card}
+      activeOpacity={0.92}
+      onPress={() => router.push(`/product/${product.id}` as any)}
+    >
+      <View style={styles.cardImgWrap}>
+        {product.image
+          ? <Image source={{ uri: product.image }} style={styles.cardImg} resizeMode="cover" />
+          : <View style={[styles.cardImg, { backgroundColor: "#f3f4f6" }]} />
+        }
+        {product.badge && (
+          <View style={[styles.badge, { backgroundColor: BADGE_COLORS[product.badge]?.bg ?? "#f3f4f6" }]}>
+            <Text style={[styles.badgeText, { color: BADGE_COLORS[product.badge]?.text ?? "#374151" }]}>
+              {product.badge}
+            </Text>
+          </View>
+        )}
+        {discount && (
+          <View style={styles.discountTag}>
+            <Text style={styles.discountText}>-{discount}%</Text>
+          </View>
+        )}
+        <TouchableOpacity
+          style={styles.heartBtn}
+          onPress={() => toggleWishlist(product)}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+        >
+          <Text style={styles.heartIcon}>{wishlisted ? "❤️" : "🤍"}</Text>
+        </TouchableOpacity>
+      </View>
 
-      <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]} edges={['bottom']}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-
-          {/* Banner Carousel */}
-          <ScrollView
-            ref={scrollViewRef}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            scrollEventThrottle={16}
-            onScroll={handleScroll}
-            style={styles.carouselContainer}
-            decelerationRate="fast"
-            snapToInterval={340}
+      <View style={styles.cardInfo}>
+        <Text style={styles.cardBrand} numberOfLines={1}>{product.brand}</Text>
+        <Text style={styles.cardName} numberOfLines={2}>{product.name}</Text>
+        <View style={styles.ratingRow}>
+          <Text style={styles.star}>★</Text>
+          <Text style={styles.ratingVal}>{product.rating}</Text>
+          <Text style={styles.ratingCount}>({product.review_count})</Text>
+        </View>
+        <View style={styles.priceRow}>
+          <View>
+            <Text style={styles.price}>${product.price}</Text>
+            {product.original_price && (
+              <Text style={styles.originalPrice}>${product.original_price}</Text>
+            )}
+          </View>
+          {/* addToCart — no quantity needed, CartContext handles it */}
+          <TouchableOpacity
+            style={styles.addBtn}
+            onPress={() => addToCart(product)}
+            activeOpacity={0.8}
           >
-            {carouselItems.map((item) => (
-              <View key={item.id} style={[styles.bannerCard, { backgroundColor: item.bg }]}>
-                <View style={styles.bannerCircle1} />
-                <View style={styles.bannerCircle2} />
-
-                <View style={styles.bannerContent}>
-                  <View style={styles.bannerTextContent}>
-                    <View style={styles.bannerBadge}>
-                      <Text style={styles.bannerBadgeText}>🔥 Hot Deal</Text>
-                    </View>
-                    <Text style={styles.bannerTitle}>{item.title}</Text>
-                    <Text style={styles.bannerSubtitle}>{item.subtitle}</Text>
-                    <TouchableOpacity style={styles.orderButton}>
-                      <Text style={styles.orderButtonText}>Order now</Text>
-                      <ChevronRight size={14} color="#fff" />
-                    </TouchableOpacity>
-                  </View>
-                  <Image source={{ uri: item.image }} style={styles.bannerFoodImage} />
-                </View>
-              </View>
-            ))}
-          </ScrollView>
-
-          <View style={styles.paginationDots}>
-            {carouselItems.map((_, i) => (
-              <View key={i} style={[styles.dot, activeSlide === i && styles.activeDot]} />
-            ))}
-          </View>
-
-          {/* Categories */}
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: theme.textColor }]}>Categories</Text>
-            <TouchableOpacity style={styles.seeMoreBtn}>
-              <Text style={[styles.seeMoreText, { color: theme.accentColor }]}>See all</Text>
-              <ChevronRight size={14} color={theme.accentColor} />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoriesContainer} contentContainerStyle={{ paddingRight: 16 }}>
-            {categories.map((cat) => (
-              <TouchableOpacity
-                key={cat.id}
-                style={[styles.categoryCard, { backgroundColor: theme.cardBackground }]}
-                onPress={() => setActiveCategory(cat.id)}
-              >
-                <View style={[styles.categoryIconWrap, activeCategory === cat.id && { backgroundColor: theme.accentColor + '20' }]}>
-                  <Image source={{ uri: cat.icon }} style={styles.categoryIcon} resizeMode="contain" />
-                </View>
-                <Text style={[styles.categoryName, { color: theme.textColor }]}>{cat.name}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          {/* Popular Meals */}
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: theme.textColor }]}>Popular Meals</Text>
-            <TouchableOpacity style={styles.seeMoreBtn}>
-              <Text style={[styles.seeMoreText, { color: theme.accentColor }]}>See all</Text>
-              <ChevronRight size={14} color={theme.accentColor} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.mealsContainer}>
-            {popularMeals.map((meal) => (
-              <View key={meal.id} style={[styles.mealCard, { backgroundColor: theme.cardBackground }]}>
-                <View style={styles.mealImageWrap}>
-                  <Image source={{ uri: meal.image }} style={styles.mealImage} resizeMode="cover" />
-                  <TouchableOpacity style={styles.favBtn} onPress={() => toggleFavorite(meal.id)}>
-                    <Heart
-                      size={16}
-                      color={favorites[meal.id] ? theme.accentColor : "#ccc"}
-                      fill={favorites[meal.id] ? theme.accentColor : "transparent"}
-                    />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.mealInfo}>
-                  <Text style={[styles.mealName, { color: theme.textColor }]}>{meal.name}</Text>
-                  <Text style={[styles.mealDescription, { color: theme.subTextColor }]} numberOfLines={2}>
-                    {meal.description}
-                  </Text>
-
-                  <View style={styles.mealMeta}>
-                    <View style={styles.ratingPill}>
-                      <Star size={11} color="#F4A535" fill="#F4A535" />
-                      <Text style={styles.ratingText}>{meal.rating}</Text>
-                      <Text style={[styles.reviewCount, { color: theme.subTextColor }]}>({meal.reviews})</Text>
-                    </View>
-                    <View style={styles.pricePill}>
-                      <Flame size={11} color={theme.accentColor} />
-                      <Text style={[styles.priceText, { color: theme.accentColor }]}>₦{meal.price.toLocaleString()}</Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.mealCardFooter}>
-                    <Text style={[styles.popularLabel, { color: theme.subTextColor }]}>⚡ Popular choice</Text>
-                    <TouchableOpacity style={[styles.addButton, { backgroundColor: theme.accentColor }]}>
-                      <Plus size={14} color="#fff" />
-                      <Text style={styles.addButtonText}>Add</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-            ))}
-          </View>
-
-          <View style={styles.bottomSpace} />
-        </ScrollView>
-      </SafeAreaView>
-    </>
+            <Text style={styles.addBtnText}>+</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </TouchableOpacity>
   );
 };
 
-export default Index;
+// ── Home screen ───────────────────────────────────────────────────────────────
+export default function HomeScreen() {
+  const router = useRouter();
+  const { profile } = useAuth();
+  const { products, loading, fetchProducts } = useProducts();
+  const { itemCount } = useCart();
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [bannerIndex,       setBannerIndex]      = useState(0);
 
+  const firstName = profile?.name?.split(" ")[0] ?? null;
+
+  const filtered = selectedCategory
+    ? products.filter(p => p.category === selectedCategory)
+    : products;
+
+  const handleCategoryPress = (id: string) => {
+    const next = selectedCategory === id ? null : id;
+    setSelectedCategory(next);
+    fetchProducts(next ? { category: next } : {});
+  };
+
+  return (
+    <SafeAreaView style={styles.safe} edges={["top"]}>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 110 }}>
+
+        {/* Header */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.greeting}>
+              {getGreeting()}{firstName ? `, ${firstName}` : ""} 👋
+            </Text>
+            <Text style={styles.headerTitle}>What are you{"\n"}looking for?</Text>
+          </View>
+          {/* Cart button with live item count badge */}
+          <TouchableOpacity style={styles.cartBtn} onPress={() => router.push("/(tabs)/mycart")}>
+            <Text style={{ fontSize: 22 }}>🛒</Text>
+            {itemCount > 0 && (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{itemCount > 9 ? "9+" : itemCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Search */}
+        <TouchableOpacity style={styles.searchBox} activeOpacity={0.8} onPress={() => router.push("/search")}>
+          <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
+          <Text style={styles.searchPlaceholder}>Search products, brands...</Text>
+        </TouchableOpacity>
+
+        {/* Banners */}
+        {loading ? <BannerSkeleton /> : (
+          <View style={{ paddingHorizontal: 16, marginBottom: 4 }}>
+            <FlatList
+              data={BANNERS}
+              keyExtractor={b => b.id}
+              horizontal pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={width - 32}
+              decelerationRate="fast"
+              onScroll={e => setBannerIndex(Math.round(e.nativeEvent.contentOffset.x / (width - 32)))}
+              renderItem={({ item }) => <Banner item={item} />}
+            />
+            <View style={styles.dots}>
+              {BANNERS.map((_, i) => (
+                <View key={i} style={[styles.dot, i === bannerIndex && styles.dotActive]} />
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Categories */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Categories</Text>
+          <TouchableOpacity onPress={() => router.push("/(tabs)/categories")}>
+            <Text style={styles.seeAll}>See all</Text>
+          </TouchableOpacity>
+        </View>
+        {loading ? <CategoryPillsSkeleton /> : (
+          <FlatList
+            data={CATEGORIES}
+            keyExtractor={c => c.id}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                onPress={() => handleCategoryPress(item.id)}
+                style={[styles.pill, { backgroundColor: selectedCategory === item.id ? "#111827" : item.color }]}
+              >
+                <Text style={{ fontSize: 15 }}>{item.icon}</Text>
+                <Text style={[styles.pillText, { color: selectedCategory === item.id ? "#fff" : "#374151" }]}>
+                  {item.name}
+                </Text>
+              </TouchableOpacity>
+            )}
+          />
+        )}
+
+        {/* Products */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>
+            {selectedCategory
+              ? CATEGORIES.find(c => c.id === selectedCategory)?.name
+              : "All Products"}
+          </Text>
+          <Text style={{ fontSize: 13, color: "#9ca3af" }}>{filtered.length} items</Text>
+        </View>
+
+        {loading ? (
+          <ProductGridSkeleton count={6} />
+        ) : filtered.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={{ fontSize: 40, marginBottom: 12 }}>📦</Text>
+            <Text style={{ fontSize: 16, fontWeight: "700", color: "#374151" }}>No products found</Text>
+            <Text style={{ fontSize: 13, color: "#9ca3af", marginTop: 4 }}>Try a different category</Text>
+          </View>
+        ) : (
+          <View style={styles.grid}>
+            {filtered.map(product => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </View>
+        )}
+
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#FAFAFA" },
-  scrollContent: { paddingBottom: 24 },
-  headerButton: {
-    paddingHorizontal: 10,
-  },
-
-  // Carousel Styles
-  carouselContainer: { marginTop: 16, marginBottom: 4 },
-  bannerCard: { 
-    width: 308, 
-    marginLeft: 20, 
-    borderRadius: 22, 
-    padding: 20, 
-    height: 150, 
-    overflow: "hidden", 
-    justifyContent: "center" 
-  },
-  bannerCircle1: { 
-    position: "absolute", 
-    width: 160, 
-    height: 160, 
-    borderRadius: 80, 
-    backgroundColor: "rgba(255,255,255,0.08)", 
-    top: -40, 
-    right: -20 
-  },
-  bannerCircle2: { 
-    position: "absolute", 
-    width: 100, 
-    height: 100, 
-    borderRadius: 50, 
-    backgroundColor: "rgba(255,255,255,0.06)", 
-    bottom: -30, 
-    right: 60 
-  },
-  bannerContent: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    justifyContent: "space-between" 
-  },
-  bannerTextContent: { flex: 1 },
-  bannerBadge: { 
-    backgroundColor: "rgba(255,255,255,0.2)", 
-    borderRadius: 20, 
-    paddingHorizontal: 10, 
-    paddingVertical: 3, 
-    alignSelf: "flex-start", 
-    marginBottom: 6 
-  },
-  bannerBadgeText: { 
-    fontSize: 10, 
-    fontWeight: "600",
-    color: "#fff" 
-  },
-  bannerTitle: { 
-    fontSize: 17, 
-    fontWeight: "800", 
-    letterSpacing: -0.3, 
-    marginBottom: 2,
-    color: "#fff" 
-  },
-  bannerSubtitle: { 
-    fontSize: 11, 
-    lineHeight: 16, 
-    marginBottom: 10,
-    color: "#fff",
-    opacity: 0.9 
-  },
-  orderButton: { 
-    borderRadius: 20, 
-    paddingHorizontal: 14, 
-    paddingVertical: 7, 
-    alignSelf: "flex-start", 
-    flexDirection: "row", 
-    alignItems: "center", 
-    gap: 2,
-    backgroundColor: "rgba(255,255,255,0.25)"
-  },
-  orderButtonText: { 
-    fontSize: 12, 
-    fontWeight: "700",
-    color: "#fff" 
-  },
-  bannerFoodImage: { 
-    width: 100, 
-    height: 100, 
-    borderRadius: 50, 
-    marginLeft: 8, 
-    borderWidth: 3, 
-    borderColor: "rgba(255,255,255,0.3)" 
-  },
-
-  // Pagination Dots
-  paginationDots: { 
-    flexDirection: "row", 
-    justifyContent: "center", 
-    alignItems: "center", 
-    marginTop: 12, 
-    marginBottom: 8, 
-    gap: 5 
-  },
-  dot: { 
-    width: 6, 
-    height: 6, 
-    borderRadius: 3, 
-    backgroundColor: "#ddd" 
-  },
-  activeDot: { 
-    backgroundColor: "#FF6B35", 
-    width: 18,
-    height: 6,
-    borderRadius: 3 
-  },
-
-  // Section Headers
-  sectionHeader: { 
-    flexDirection: "row", 
-    justifyContent: "space-between", 
-    alignItems: "center", 
-    paddingHorizontal: 20, 
-    marginTop: 22, 
-    marginBottom: 14 
-  },
-  sectionTitle: { 
-    fontSize: 17, 
-    fontWeight: "800", 
-    letterSpacing: -0.3 
-  },
-  seeMoreBtn: { 
-    flexDirection: "row", 
-    alignItems: "center" 
-  },
-  seeMoreText: { 
-    fontSize: 13, 
-    fontWeight: "600" 
-  },
-
-  // Categories
-  categoriesContainer: { 
-    paddingLeft: 20 
-  },
-  categoryCard: { 
-    alignItems: "center", 
-    marginRight: 12, 
-    borderRadius: 16, 
-    paddingVertical: 10, 
-    paddingHorizontal: 14, 
-    shadowColor: "#000", 
-    shadowOffset: { width: 0, height: 2 }, 
-    shadowOpacity: 0.05, 
-    shadowRadius: 6, 
-    elevation: 2 
-  },
-  categoryIconWrap: { 
-    width: 48, 
-    height: 48, 
-    borderRadius: 24, 
-    backgroundColor: "#f5f5f5", 
-    alignItems: "center", 
-    justifyContent: "center", 
-    marginBottom: 6 
-  },
-  categoryIcon: { 
-    width: 28, 
-    height: 28 
-  },
-  categoryName: { 
-    fontSize: 11, 
-    fontWeight: "600" 
-  },
-
-  // Popular Meals
-  mealsContainer: { 
-    paddingHorizontal: 20 
-  },
-  mealCard: { 
-    flexDirection: "row", 
-    borderRadius: 20, 
-    marginBottom: 14, 
-    padding: 14, 
-    shadowColor: "#000", 
-    shadowOffset: { width: 0, height: 4 }, 
-    shadowOpacity: 0.07, 
-    shadowRadius: 12, 
-    elevation: 3 
-  },
-  mealImageWrap: { 
-    position: "relative" 
-  },
-  mealImage: { 
-    width: 96, 
-    height: 96, 
-    borderRadius: 16 
-  },
-  favBtn: { 
-    position: "absolute", 
-    top: 6, 
-    right: 6, 
-    width: 28, 
-    height: 28, 
-    borderRadius: 14, 
-    backgroundColor: "rgba(255,255,255,0.92)", 
-    alignItems: "center", 
-    justifyContent: "center", 
-    shadowColor: "#000", 
-    shadowOffset: { width: 0, height: 1 }, 
-    shadowOpacity: 0.1, 
-    shadowRadius: 3 
-  },
-  mealInfo: { 
-    flex: 1, 
-    marginLeft: 14, 
-    justifyContent: "space-between" 
-  },
-  mealName: { 
-    fontSize: 15, 
-    fontWeight: "800", 
-    letterSpacing: -0.3, 
-    marginBottom: 3 
-  },
-  mealDescription: { 
-    fontSize: 11.5, 
-    lineHeight: 17, 
-    marginBottom: 8 
-  },
-  mealMeta: { 
-    flexDirection: "row", 
-    gap: 8, 
-    marginBottom: 8 
-  },
-  ratingPill: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    gap: 3, 
-    backgroundColor: "#FFF8EE", 
-    paddingHorizontal: 8, 
-    paddingVertical: 4, 
-    borderRadius: 20 
-  },
-  ratingText: { 
-    fontSize: 11, 
-    fontWeight: "700", 
-    color: "#F4A535" 
-  },
-  reviewCount: { 
-    fontSize: 10 
-  },
-  pricePill: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    gap: 3, 
-    backgroundColor: "#FFF2EE", 
-    paddingHorizontal: 8, 
-    paddingVertical: 4, 
-    borderRadius: 20 
-  },
-  priceText: { 
-    fontSize: 11, 
-    fontWeight: "700" 
-  },
-  mealCardFooter: { 
-    flexDirection: "row", 
-    justifyContent: "space-between", 
-    alignItems: "center" 
-  },
-  popularLabel: { 
-    fontSize: 10.5, 
-    fontWeight: "500" 
-  },
-  addButton: { 
-    borderRadius: 20, 
-    paddingHorizontal: 14, 
-    paddingVertical: 7, 
-    flexDirection: "row", 
-    alignItems: "center", 
-    gap: 4 
-  },
-  addButtonText: { 
-    color: "#fff", 
-    fontSize: 12, 
-    fontWeight: "700" 
-  },
-
-  bottomSpace: { 
-    height: 80 
-  }
+  safe: { flex: 1, backgroundColor: "#f9fafb" },
+  header: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12, backgroundColor: "#fff" },
+  greeting: { fontSize: 13, color: "#6b7280", marginBottom: 4 },
+  headerTitle: { fontSize: 24, fontWeight: "800", color: "#111827", lineHeight: 30 },
+  cartBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: "#f3f4f6", alignItems: "center", justifyContent: "center", marginTop: 4, position: "relative" },
+  cartBadge: { position: "absolute", top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: "#ef4444", alignItems: "center", justifyContent: "center", paddingHorizontal: 4, borderWidth: 2, borderColor: "#f9fafb" },
+  cartBadgeText: { fontSize: 9, fontWeight: "800", color: "#fff" },
+  searchBox: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", marginHorizontal: 16, marginVertical: 12, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 14, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
+  searchPlaceholder: { flex: 1, fontSize: 14, color: "#9ca3af" },
+  banner: { width: width - 32, height: 160, borderRadius: 20, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 24, overflow: "hidden" },
+  bannerContent: { flex: 1 },
+  bannerSubtitle: { fontSize: 12, fontWeight: "600", marginBottom: 4 },
+  bannerTitle: { fontSize: 22, fontWeight: "800", color: "#fff", marginBottom: 14, lineHeight: 26 },
+  bannerBtn: { alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
+  bannerBtnText: { fontSize: 12, fontWeight: "700" },
+  bannerEmoji: { fontSize: 64, opacity: 0.9 },
+  dots: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 10 },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#d1d5db" },
+  dotActive: { width: 18, backgroundColor: "#111827" },
+  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, marginTop: 20, marginBottom: 12 },
+  sectionTitle: { fontSize: 18, fontWeight: "700", color: "#111827" },
+  seeAll: { fontSize: 13, fontWeight: "600", color: "#6b7280" },
+  pill: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 9, borderRadius: 50, gap: 6 },
+  pillText: { fontSize: 13, fontWeight: "600" },
+  grid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 16, gap: 12, justifyContent: "space-between" },
+  card: { width: CARD_WIDTH, backgroundColor: "#fff", borderRadius: 16, overflow: "hidden", marginBottom: 4, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 8, elevation: 3 },
+  cardImgWrap: { width: "100%", height: 150, backgroundColor: "#f5f5f5", position: "relative" },
+  cardImg: { width: "100%", height: "100%" },
+  badge: { position: "absolute", top: 8, left: 8, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  badgeText: { fontSize: 10, fontWeight: "700" },
+  discountTag: { position: "absolute", top: 8, right: 8, backgroundColor: "#dc2626", paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6 },
+  discountText: { color: "#fff", fontSize: 10, fontWeight: "700" },
+  heartBtn: { position: "absolute", bottom: 8, right: 8 },
+  heartIcon: { fontSize: 16 },
+  cardInfo: { padding: 10 },
+  cardBrand: { fontSize: 10, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 },
+  cardName: { fontSize: 13, fontWeight: "600", color: "#111827", marginBottom: 4, lineHeight: 18 },
+  ratingRow: { flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 2 },
+  star: { fontSize: 11, color: "#f59e0b" },
+  ratingVal: { fontSize: 11, fontWeight: "600", color: "#374151" },
+  ratingCount: { fontSize: 11, color: "#9ca3af" },
+  priceRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" },
+  price: { fontSize: 15, fontWeight: "700", color: "#111827" },
+  originalPrice: { fontSize: 11, color: "#9ca3af", textDecorationLine: "line-through" },
+  addBtn: { width: 30, height: 30, borderRadius: 10, backgroundColor: "#111827", alignItems: "center", justifyContent: "center" },
+  addBtnText: { color: "#fff", fontSize: 20, fontWeight: "300", lineHeight: 24 },
+  empty: { alignItems: "center", paddingVertical: 60 },
 });
