@@ -1,6 +1,7 @@
+// app/(tabs)/_layout.tsx
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { View, Text, StyleSheet, Platform } from "react-native";
+import { View, Text, StyleSheet, Platform, useWindowDimensions } from "react-native";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { useCart } from "../../context/CartContext";
 
@@ -25,13 +26,25 @@ function CartIcon({ color, focused }: { color: string; focused: boolean }) {
 
 // ── Tab icon wrapper — adds active dot indicator ──────────────────────────────
 function TabIcon({
-  name, focusedName, color, focused, size = 23,
+  name,
+  focusedName,
+  color,
+  focused,
+  size = 23,
 }: {
-  name: any; focusedName: any; color: string; focused: boolean; size?: number;
+  name: any;
+  focusedName: any;
+  color: string;
+  focused: boolean;
+  size?: number;
 }) {
   return (
     <View style={styles.iconWrap}>
-      <Ionicons name={focused ? focusedName : name} color={color} size={focused ? size + 2 : size} />
+      <Ionicons
+        name={focused ? focusedName : name}
+        color={color}
+        size={focused ? size + 2 : size}
+      />
       {focused && <View style={styles.dot} />}
     </View>
   );
@@ -39,6 +52,9 @@ function TabIcon({
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 export default function TabsLayout() {
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 1024;
+
   return (
     <ThemeProvider>
       <Tabs
@@ -46,7 +62,8 @@ export default function TabsLayout() {
           headerShown: false,
           tabBarActiveTintColor: "#f97316",
           tabBarInactiveTintColor: "#9ca3af",
-          tabBarStyle: styles.tabBar,
+          // Hide tab bar on desktop
+          tabBarStyle: isDesktop ? { display: "none" } : styles.tabBar,
           tabBarLabelStyle: styles.tabLabel,
           tabBarItemStyle: styles.tabItem,
         }}
@@ -56,7 +73,12 @@ export default function TabsLayout() {
           options={{
             title: "Home",
             tabBarIcon: ({ color, focused }) => (
-              <TabIcon name="home-outline" focusedName="home" color={color} focused={focused} />
+              <TabIcon
+                name="home-outline"
+                focusedName="home"
+                color={color}
+                focused={focused}
+              />
             ),
           }}
         />
@@ -65,10 +87,31 @@ export default function TabsLayout() {
           options={{
             title: "Explore",
             tabBarIcon: ({ color, focused }) => (
-              <TabIcon name="compass-outline" focusedName="compass" color={color} focused={focused} />
+              <TabIcon
+                name="compass-outline"
+                focusedName="compass"
+                color={color}
+                focused={focused}
+              />
             ),
           }}
         />
+
+        <Tabs.Screen
+          name="wishlist"
+          options={{
+            title: "Wishlist",
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon
+                name="heart-outline"
+                focusedName="heart"
+                color={color}
+                focused={focused}
+              />
+            ),
+          }}
+        />
+
         <Tabs.Screen
           name="mycart"
           options={{
@@ -86,7 +129,12 @@ export default function TabsLayout() {
           options={{
             title: "Account",
             tabBarIcon: ({ color, focused }) => (
-              <TabIcon name="person-outline" focusedName="person" color={color} focused={focused} />
+              <TabIcon
+                name="person-outline"
+                focusedName="person"
+                color={color}
+                focused={focused}
+              />
             ),
           }}
         />
@@ -99,26 +147,24 @@ export default function TabsLayout() {
 const styles = StyleSheet.create({
   tabBar: {
     position: "absolute",
-    bottom: Platform.OS === "ios" ? 24 : 16,
-    left: 16,
-    right: 16,
-    height: 64,
-    borderRadius: 20,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: Platform.OS === "ios" ? 85 : 65,
     backgroundColor: "#ffffff",
-    borderTopWidth: 0,
-    // Shadow iOS
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 20,
-    // Shadow Android
-    elevation: 12,
-    paddingBottom: 0,
-    paddingTop: 0,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+    shadowColor: "transparent",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
+    paddingBottom: Platform.OS === "ios" ? 20 : 8,
+    paddingTop: 8,
   },
   tabItem: {
-    paddingTop: 10,
-    paddingBottom: 8,
+    paddingTop: 6,
+    paddingBottom: 4,
     gap: 2,
   },
   tabLabel: {

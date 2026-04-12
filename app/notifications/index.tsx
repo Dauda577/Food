@@ -1,68 +1,96 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Dimensions, StatusBar, Alert,
+  StatusBar, Alert, ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { useOrders } from "../../context/OrdersContext";
 import { useAuth } from "../../context/AuthContext";
+import { supabase } from "../../lib/supabase";
 
-const { width } = Dimensions.get("window");
+// ── Types ─────────────────────────────────────────────────────────────────────
+type NotifType = "order" | "promo" | "delivery" | "review" | "account" | "price";
 
 type Notification = {
   id: string;
-  type: "order" | "promo" | "delivery" | "review" | "account" | "price";
+  type: NotifType;
   title: string;
   body: string;
-  time: string;
   read: boolean;
-  actionRoute?: string;
+  action_route?: string | null;
+  created_at: string;
 };
 
+// ── Config ────────────────────────────────────────────────────────────────────
 const TYPE_CONFIG: Record<string, { icon: string; color: string; bg: string }> = {
-  order:    { icon: "🛍️", color: "#f97316", bg: "#fff7ed" },
-  promo:    { icon: "🏷️", color: "#7c3aed", bg: "#f5f3ff" },
+  order: { icon: "🛍️", color: "#f97316", bg: "#fff7ed" },
+  promo: { icon: "🏷️", color: "#7c3aed", bg: "#f5f3ff" },
   delivery: { icon: "🚚", color: "#2563eb", bg: "#eff6ff" },
-  review:   { icon: "⭐", color: "#d97706", bg: "#fffbeb" },
-  account:  { icon: "👤", color: "#16a34a", bg: "#f0fdf4" },
-  price:    { icon: "📉", color: "#dc2626", bg: "#fef2f2" },
+  review: { icon: "⭐", color: "#d97706", bg: "#fffbeb" },
+  account: { icon: "👤", color: "#16a34a", bg: "#f0fdf4" },
+  price: { icon: "📉", color: "#dc2626", bg: "#fef2f2" },
 };
 
-const FILTERS = ["All", "Orders", "Promos", "Delivery"];
+const FILTERS = ["All", "Orders", "Promos", "Delivery"] as const;
+type Filter = typeof FILTERS[number];
 
-const filterMap: Record<string, string[]> = {
-  All:      ["order", "promo", "delivery", "review", "account", "price"],
-  Orders:   ["order", "review"],
-  Promos:   ["promo", "price"],
+const FILTER_TYPES: Record<Filter, NotifType[]> = {
+  All: ["order", "promo", "delivery", "review", "account", "price"],
+  Orders: ["order", "review"],
+  Promos: ["promo", "price"],
   Delivery: ["delivery"],
 };
 
-const groupNotifs = (notifs: Notification[]) => {
-  const today: Notification[]     = [];
+// ── Grouping ──────────────────────────────────────────────────────────────────
+function groupNotifs(notifs: Notification[]) {
+  const now = new Date();
+  const todayStr = now.toDateString();
+  const yest = new Date(now); yest.setDate(now.getDate() - 1);
+  const yesterStr = yest.toDateString();
+  const weekAgo = new Date(now); weekAgo.setDate(now.getDate() - 7);
+
+  const today: Notification[] = [];
   const yesterday: Notification[] = [];
-  const older: Notification[]     = [];
+  const thisWeek: Notification[] = [];
+  const older: Notification[] = [];
 
   notifs.forEach(n => {
-    if (n.time.includes("AM") || n.time.includes("PM")) today.push(n);
-    else if (n.time === "Yesterday") yesterday.push(n);
+    const d = new Date(n.created_at);
+    const s = d.toDateString();
+    if (s === todayStr) today.push(n);
+    else if (s === yesterStr) yesterday.push(n);
+    else if (d >= weekAgo) thisWeek.push(n);
     else older.push(n);
   });
 
-  const groups = [];
-  if (today.length)     groups.push({ label: "Today",     items: today });
+  const groups: { label: string; items: Notification[] }[] = [];
+  if (today.length) groups.push({ label: "Today", items: today });
   if (yesterday.length) groups.push({ label: "Yesterday", items: yesterday });
-  if (older.length)     groups.push({ label: "This Week", items: older });
+  if (thisWeek.length) groups.push({ label: "This Week", items: thisWeek });
+  if (older.length) groups.push({ label: "Older", items: older });
   return groups;
-};
+}
+
+function formatTime(iso: string) {
+  const d = new Date(iso);
+  const now = new Date();
+  const todayStr = now.toDateString();
+  const yest = new Date(now); yest.setDate(now.getDate() - 1);
+
+  if (d.toDateString() === todayStr) {
+    return d.toLocaleTimeString("en-GH", { hour: "numeric", minute: "2-digit" });
+  }
+  if (d.toDateString() === yest.toDateString()) return "Yesterday";
+  return d.toLocaleDateString("en-GH", { day: "numeric", month: "short" });
+}
 
 // ── Notification row ──────────────────────────────────────────────────────────
-const NotifRow = ({
+const NotifRow = React.memo(({
   notif, onPress, onDismiss,
 }: {
   notif: Notification; onPress: () => void; onDismiss: () => void;
 }) => {
-  const cfg = TYPE_CONFIG[notif.type];
+  const cfg = TYPE_CONFIG[notif.type] ?? TYPE_CONFIG.order;
   return (
     <TouchableOpacity
       style={[styles.notifRow, !notif.read && styles.notifRowUnread]}
@@ -78,128 +106,134 @@ const NotifRow = ({
           {notif.title}
         </Text>
         <Text style={styles.notifBody} numberOfLines={2}>{notif.body}</Text>
-        <Text style={styles.notifTime}>{notif.time}</Text>
+        <Text style={styles.notifTime}>{formatTime(notif.created_at)}</Text>
       </View>
-      <TouchableOpacity style={styles.dismissBtn} onPress={onDismiss} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+      <TouchableOpacity
+        style={styles.dismissBtn}
+        onPress={onDismiss}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
         <Text style={styles.dismissIcon}>✕</Text>
       </TouchableOpacity>
     </TouchableOpacity>
   );
-};
+});
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 export default function NotificationsScreen() {
   const router = useRouter();
-  const { orders } = useOrders();
-  const { profile } = useAuth();
-
-  const firstName = profile?.name?.split(" ")[0] ?? "there";
-
-  // Build dynamic notifications from real orders + static promos
-  const INITIAL_NOTIFS: Notification[] = useMemo(() => {
-    const notifs: Notification[] = [];
-
-    // Real order-based notifications
-    orders.slice(0, 5).forEach((order, i) => {
-      const shortId = `#${order.id.slice(0, 8).toUpperCase()}`;
-      const itemCount = order.items?.reduce((s, it) => s + it.quantity, 0) ?? 1;
-      const firstName = order.items?.[0]?.product?.name ?? "your order";
-
-      if (order.status === "out_for_delivery") {
-        notifs.push({
-          id: `order-delivery-${order.id}`,
-          type: "delivery",
-          title: "Your order is out for delivery! 🚚",
-          body: `${shortId} · ${firstName} is on its way. Expected today.`,
-          time: "10:15 AM",
-          read: false,
-          actionRoute: `/order/${order.id}`,
-        });
-      } else if (order.status === "delivered") {
-        notifs.push({
-          id: `order-delivered-${order.id}`,
-          type: "order",
-          title: "Order delivered ✅",
-          body: `${shortId} has been delivered. Tap to leave a review.`,
-          time: "Yesterday",
-          read: i > 0,
-          actionRoute: `/order/${order.id}`,
-        });
-      } else if (order.status === "in_transit") {
-        notifs.push({
-          id: `order-transit-${order.id}`,
-          type: "delivery",
-          title: "Order picked up by carrier 📦",
-          body: `${shortId} is on its way to you.`,
-          time: "Yesterday",
-          read: i > 0,
-          actionRoute: `/order/${order.id}`,
-        });
-      } else if (order.status === "pending" || order.status === "processing") {
-        notifs.push({
-          id: `order-confirmed-${order.id}`,
-          type: "order",
-          title: "Order confirmed ✅",
-          body: `${shortId} has been confirmed. We'll notify you when it ships.`,
-          time: "Yesterday",
-          read: i > 0,
-          actionRoute: `/order/${order.id}`,
-        });
-      }
-
-      // Payment notification for all orders
-      notifs.push({
-        id: `order-payment-${order.id}`,
-        type: "order",
-        title: "Payment successful 💳",
-        body: `Your payment of $${order.total.toLocaleString()} for ${shortId} was processed.`,
-        time: "Mar 15",
-        read: true,
-        actionRoute: `/order/${order.id}`,
-      });
-    });
-
-    // Static promo + account notifications
-    notifs.push(
-      { id: "promo-1",   type: "promo",    title: "Flash Sale — Up to 50% Off 🔥",      body: "Today only! Electronics, fashion and more. Shop before midnight.",          time: "9:00 AM",  read: false, actionRoute: "/(tabs)/categories" },
-      { id: "price-1",   type: "price",    title: "Price drop on your wishlist item 📉", body: "Sony WH-1000XM5 dropped from $349 to $279. Grab it before it's gone!",    time: "8:30 AM",  read: false, actionRoute: "/product/3" },
-      { id: "promo-2",   type: "promo",    title: "New arrivals just dropped 👟",         body: "Check out the latest sneakers and fashion from top brands.",                time: "Yesterday",read: true,  actionRoute: "/(tabs)/categories" },
-      { id: "account-1", type: "account",  title: `Welcome to ShopApp, ${firstName}! 🎉`, body: "Your account is ready. Start browsing thousands of products.",             time: "Mar 12",   read: true },
-      { id: "price-2",   type: "price",    title: "Back in stock — MacBook Air M2 💻",   body: "The item you saved is back in stock. Limited units available.",             time: "Mar 11",   read: true,  actionRoute: "/product/4" },
-    );
-
-    return notifs;
-  }, [orders, firstName]);
+  const { user } = useAuth();
 
   const [notifs, setNotifs] = useState<Notification[]>([]);
-  const [filter, setFilter] = useState("All");
-  const [initialised, setInitialised] = React.useState(false);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<Filter>("All");
 
-  // Sync when orders load
-  React.useEffect(() => {
-    if (!initialised && INITIAL_NOTIFS.length > 0) {
-      setNotifs(INITIAL_NOTIFS);
-      setInitialised(true);
-    }
-  }, [INITIAL_NOTIFS, initialised]);
+  // Track in-flight optimistic IDs so we don't double-apply realtime events
+  const pendingIds = useRef<Set<string>>(new Set());
 
+  // ── Fetch ───────────────────────────────────────────────────────────────
+  const fetchNotifs = useCallback(async () => {
+    if (!user?.id) return;
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (!error && data) setNotifs(data as Notification[]);
+    setLoading(false);
+  }, [user?.id]);
+
+  useEffect(() => { fetchNotifs(); }, [fetchNotifs]);
+
+  // ── Realtime ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const channel = supabase
+      .channel(`notifications:${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "notifications",
+          filter: `user_id=eq.${user.id}`,
+        },
+        payload => {
+          if (payload.eventType === "INSERT") {
+            const n = payload.new as Notification;
+            if (pendingIds.current.has(n.id)) {
+              pendingIds.current.delete(n.id);
+              return; // Already applied optimistically
+            }
+            setNotifs(prev => [n, ...prev]);
+          } else if (payload.eventType === "UPDATE") {
+            const n = payload.new as Notification;
+            setNotifs(prev => prev.map(x => x.id === n.id ? n : x));
+          } else if (payload.eventType === "DELETE") {
+            setNotifs(prev => prev.filter(x => x.id !== payload.old.id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id]);
+
+  // ── Derived ─────────────────────────────────────────────────────────────
   const unreadCount = notifs.filter(n => !n.read).length;
+  const filtered = notifs.filter(n => FILTER_TYPES[filter].includes(n.type as NotifType));
+  const groups = groupNotifs(filtered);
 
-  const markAllRead = () => setNotifs(prev => prev.map(n => ({ ...n, read: true })));
-  const dismiss     = (id: string) => setNotifs(prev => prev.filter(n => n.id !== id));
-  const clearAll    = () => Alert.alert("Clear All", "Remove all notifications?", [
-    { text: "Cancel", style: "cancel" },
-    { text: "Clear", style: "destructive", onPress: () => setNotifs([]) },
-  ]);
+  // ── Actions ──────────────────────────────────────────────────────────────
 
-  const handlePress = (notif: Notification) => {
-    setNotifs(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
-    if (notif.actionRoute) router.push(notif.actionRoute as any);
-  };
+  // Mark a single notification read (optimistic)
+  const markRead = useCallback(async (id: string) => {
+    setNotifs(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    await supabase.from("notifications").update({ read: true }).eq("id", id);
+  }, []);
 
-  const filtered = notifs.filter(n => filterMap[filter].includes(n.type));
-  const groups   = groupNotifs(filtered);
+  // Mark all read (optimistic)
+  const markAllRead = useCallback(async () => {
+    if (!user?.id) return;
+    setNotifs(prev => prev.map(n => ({ ...n, read: true })));
+    await supabase
+      .from("notifications")
+      .update({ read: true })
+      .eq("user_id", user.id)
+      .eq("read", false);
+  }, [user?.id]);
 
+  // Dismiss single (optimistic)
+  const dismiss = useCallback(async (id: string) => {
+    setNotifs(prev => prev.filter(n => n.id !== id));
+    await supabase.from("notifications").delete().eq("id", id);
+  }, []);
+
+  // Clear all
+  const clearAll = useCallback(() => {
+    Alert.alert("Clear All", "Remove all notifications?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Clear", style: "destructive", onPress: async () => {
+          if (!user?.id) return;
+          setNotifs([]);
+          await supabase.from("notifications").delete().eq("user_id", user.id);
+        },
+      },
+    ]);
+  }, [user?.id]);
+
+  // Press — mark read then navigate
+  const handlePress = useCallback(async (notif: Notification) => {
+    if (!notif.read) await markRead(notif.id);
+    if (notif.action_route) router.push(notif.action_route as any);
+  }, [markRead, router]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
@@ -211,7 +245,9 @@ export default function NotificationsScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Notifications</Text>
-          {unreadCount > 0 && <Text style={styles.headerSub}>{unreadCount} unread</Text>}
+          {unreadCount > 0 && (
+            <Text style={styles.headerSub}>{unreadCount} unread</Text>
+          )}
         </View>
         <View style={styles.headerActions}>
           {unreadCount > 0 && (
@@ -246,16 +282,26 @@ export default function NotificationsScreen() {
       </View>
 
       {/* Content */}
-      {filtered.length === 0 ? (
+      {loading ? (
+        <View style={styles.empty}>
+          <ActivityIndicator size="large" color="#f97316" />
+          <Text style={[styles.emptySub, { marginTop: 12 }]}>Loading notifications...</Text>
+        </View>
+      ) : filtered.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyEmoji}>🔔</Text>
           <Text style={styles.emptyTitle}>No notifications</Text>
           <Text style={styles.emptySub}>
-            {filter === "All" ? "You're all caught up!" : `No ${filter.toLowerCase()} notifications yet.`}
+            {filter === "All"
+              ? "You're all caught up!"
+              : `No ${filter.toLowerCase()} notifications yet.`}
           </Text>
         </View>
       ) : (
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 40 }}
+        >
           {groups.map(group => (
             <View key={group.label}>
               <View style={styles.groupHeader}>

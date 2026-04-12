@@ -6,25 +6,22 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { useProducts, Product } from "../../context/ProductsContext";
+import { useProducts, Product, ProductVariant } from "../../context/ProductsContext";
 import { useCart } from "../../context/CartContext";
 import { useWishlist } from "../../context/WishlistContext";
 
 const { width } = Dimensions.get("window");
 
-// ── Mock reviews (until reviews table is created) ─────────────────────────────
-const MOCK_REVIEWS: Record<string, any[]> = {
-  default: [
-    { id: "r1", user: "Kwame A.", rating: 5, date: "Feb 2025", comment: "Excellent product, exactly as described. Fast delivery too!" },
-    { id: "r2", user: "Ama S.",  rating: 4, date: "Jan 2025", comment: "Very good quality. Would definitely buy again." },
-    { id: "r3", user: "Kojo M.", rating: 5, date: "Dec 2024", comment: "Great value for money. Highly recommend!" },
-  ],
-};
+const MOCK_REVIEWS = [
+  { id: "r1", user: "Kwame A.", rating: 5, date: "Feb 2025", comment: "Excellent product, exactly as described. Fast delivery too!" },
+  { id: "r2", user: "Ama S.", rating: 4, date: "Jan 2025", comment: "Very good quality. Would definitely buy again." },
+  { id: "r3", user: "Kojo M.", rating: 5, date: "Dec 2024", comment: "Great value for money. Highly recommend!" },
+];
 
 const BADGE_COLORS: Record<string, { bg: string; text: string }> = {
-  New:  { bg: "#dcfce7", text: "#16a34a" },
+  New: { bg: "#dcfce7", text: "#16a34a" },
   Sale: { bg: "#fee2e2", text: "#dc2626" },
-  Hot:  { bg: "#ffedd5", text: "#ea580c" },
+  Hot: { bg: "#ffedd5", text: "#ea580c" },
 };
 
 const Stars = ({ rating, size = 13 }: { rating: number; size?: number }) => (
@@ -35,6 +32,112 @@ const Stars = ({ rating, size = 13 }: { rating: number; size?: number }) => (
   </View>
 );
 
+// ── Variant Selector ──────────────────────────────────────────────────────────
+const VariantSelector = ({
+  variants,
+  selectedVariant,
+  onSelect,
+}: {
+  variants: ProductVariant[];
+  selectedVariant: ProductVariant | null;
+  onSelect: (v: ProductVariant) => void;
+}) => {
+  if (variants.length === 0) return null;
+
+  // Group option types across all variants
+  // e.g. { "Size": ["40","41","42"], "Color": ["Black","White"] }
+  const optionMap: Record<string, string[]> = {};
+  variants.forEach(v => {
+    v.options.forEach(o => {
+      if (!optionMap[o.name]) optionMap[o.name] = [];
+      if (!optionMap[o.name].includes(o.value)) optionMap[o.name].push(o.value);
+    });
+  });
+
+  // Track selected values per option type
+  const [selectedValues, setSelectedValues] = useState<Record<string, string>>({});
+
+  // When selected values change, find the matching variant
+  useEffect(() => {
+    const keys = Object.keys(optionMap);
+    if (keys.length === 0) return;
+
+    const match = variants.find(v =>
+      keys.every(key => {
+        const val = selectedValues[key];
+        return val ? v.options.some(o => o.name === key && o.value === val) : true;
+      })
+    );
+    if (match) onSelect(match);
+  }, [selectedValues]);
+
+  return (
+    <View style={varStyles.container}>
+      {Object.entries(optionMap).map(([optionName, values]) => (
+        <View key={optionName} style={varStyles.group}>
+          <Text style={varStyles.groupLabel}>{optionName}</Text>
+          <View style={varStyles.pills}>
+            {values.map(value => {
+              const isSelected = selectedValues[optionName] === value;
+
+              // Check if any variant with this value is in stock
+              const hasStock = variants.some(v =>
+                v.options.some(o => o.name === optionName && o.value === value) &&
+                v.stock > 0
+              );
+
+              return (
+                <TouchableOpacity
+                  key={value}
+                  style={[
+                    varStyles.pill,
+                    isSelected && varStyles.pillSelected,
+                    !hasStock && varStyles.pillOutOfStock,
+                  ]}
+                  onPress={() => {
+                    if (!hasStock) return;
+                    setSelectedValues(prev => ({ ...prev, [optionName]: value }));
+                  }}
+                  disabled={!hasStock}
+                >
+                  <Text style={[
+                    varStyles.pillText,
+                    isSelected && varStyles.pillTextSelected,
+                    !hasStock && varStyles.pillTextOutOfStock,
+                  ]}>
+                    {value}
+                  </Text>
+                  {!hasStock && <View style={varStyles.strikethrough} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      ))}
+
+      {selectedVariant && (
+        <View style={varStyles.stockRow}>
+          <View style={[
+            varStyles.stockDot,
+            { backgroundColor: selectedVariant.stock > 0 ? "#16a34a" : "#dc2626" }
+          ]} />
+          <Text style={varStyles.stockText}>
+            {selectedVariant.stock > 0
+              ? `${selectedVariant.stock} in stock`
+              : "Out of stock"}
+          </Text>
+          {selectedVariant.price_override && (
+            <Text style={varStyles.variantPrice}>
+              ${selectedVariant.price_override.toLocaleString()}
+            </Text>
+          )}
+        </View>
+      )}
+    </View>
+  );
+};
+
+// ── Main Screen ───────────────────────────────────────────────────────────────
 export default function ProductDetail() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -42,31 +145,43 @@ export default function ProductDetail() {
   const { addToCart } = useCart();
   const { isWishlisted, toggleWishlist } = useWishlist();
 
-  const [product,      setProduct]      = useState<Product | null>(null);
-  const [loading,      setLoading]      = useState(true);
-  const [imgIndex,     setImgIndex]     = useState(0);
-  const [selectedColor, setColor]       = useState<string | null>(null);
-  const [selectedOption, setOption]     = useState<string | null>(null);
-  const [quantity,     setQuantity]     = useState(1);
-  const [addedToCart,  setAddedToCart]  = useState(false);
-  const [activeTab,    setActiveTab]    = useState<"details" | "reviews">("details");
+  const [product, setProduct] = useState<Product | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [imgIndex, setImgIndex] = useState(0);
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
+  const [addedToCart, setAddedToCart] = useState(false);
+  const [activeTab, setActiveTab] = useState<"details" | "reviews">("details");
 
-  // Fetch real product from Supabase
   useEffect(() => {
     if (!id) return;
     fetchProductById(id).then(data => {
       setProduct(data);
+      // Auto-select first in-stock variant if exists
+      if (data?.variants?.length) {
+        const firstInStock = data.variants.find(v => v.stock > 0) ?? data.variants[0];
+        setSelectedVariant(firstInStock);
+      }
       setLoading(false);
     });
   }, [id]);
 
   const wishlisted = product ? isWishlisted(product.id) : false;
-  const reviews    = MOCK_REVIEWS["default"];
 
-  const handleAddToCart = () => {
+  // Effective price — variant override or base price
+  const effectivePrice = selectedVariant?.price_override ?? product?.price ?? 0;
+
+  // Is current selection in stock?
+  const inStock = product?.variants?.length
+    ? (selectedVariant?.stock ?? 0) > 0
+    : (product?.in_stock ?? false);
+
+  const handleAddToCart = async () => {
     if (!product) return;
-    // Add to cart `quantity` times
-    for (let i = 0; i < quantity; i++) addToCart(product);
+
+    // If product has variants and none selected, don't allow add
+    if (product.variants.length > 0 && !selectedVariant) return;
+
+    await addToCart(product, selectedVariant ?? null);
     setAddedToCart(true);
     setTimeout(() => setAddedToCart(false), 2000);
   };
@@ -75,7 +190,6 @@ export default function ProductDetail() {
     setImgIndex(Math.round(e.nativeEvent.contentOffset.x / width));
   };
 
-  // ── Loading state ─────────────────────────────────────────────────────────
   if (loading) {
     return (
       <View style={[styles.root, { alignItems: "center", justifyContent: "center" }]}>
@@ -85,7 +199,6 @@ export default function ProductDetail() {
     );
   }
 
-  // ── Not found ─────────────────────────────────────────────────────────────
   if (!product) {
     return (
       <SafeAreaView style={[styles.root, { alignItems: "center", justifyContent: "center" }]} edges={["top"]}>
@@ -99,11 +212,11 @@ export default function ProductDetail() {
   }
 
   const discount = product.original_price
-    ? Math.round((1 - product.price / product.original_price) * 100)
+    ? Math.round((1 - effectivePrice / product.original_price) * 100)
     : null;
 
-  // Build images array — use product.image as single image for now
-  const images = product.image ? [product.image] : [];
+  const images = product.images?.length ? product.images : [];
+  const needsVariantSelection = product.variants.length > 0 && !selectedVariant;
 
   return (
     <View style={styles.root}>
@@ -111,7 +224,7 @@ export default function ProductDetail() {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
 
-        {/* ── Image carousel ── */}
+        {/* Image carousel */}
         <View style={[styles.imgCarousel, images.length === 0 && { backgroundColor: "#f3f4f6" }]}>
           {images.length > 0 ? (
             <FlatList
@@ -131,21 +244,17 @@ export default function ProductDetail() {
             </View>
           )}
 
-          {/* Top bar */}
           <SafeAreaView style={styles.imgTopBar} edges={["top"]}>
             <TouchableOpacity style={styles.iconBtn} onPress={() => router.back()}>
               <Text style={styles.iconBtnText}>←</Text>
             </TouchableOpacity>
-            <View style={styles.imgTopRight}>
-              <TouchableOpacity style={styles.iconBtn} onPress={() => product && toggleWishlist(product)}>
-                <Text style={[styles.iconBtnText, wishlisted && { color: "#ef4444" }]}>
-                  {wishlisted ? "♥" : "♡"}
-                </Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity style={styles.iconBtn} onPress={() => toggleWishlist(product)}>
+              <Text style={[styles.iconBtnText, wishlisted && { color: "#ef4444" }]}>
+                {wishlisted ? "♥" : "♡"}
+              </Text>
+            </TouchableOpacity>
           </SafeAreaView>
 
-          {/* Badge */}
           {product.badge && BADGE_COLORS[product.badge] && (
             <View style={[styles.heroBadge, { backgroundColor: BADGE_COLORS[product.badge].bg }]}>
               <Text style={[styles.heroBadgeText, { color: BADGE_COLORS[product.badge].text }]}>
@@ -154,7 +263,6 @@ export default function ProductDetail() {
             </View>
           )}
 
-          {/* Dots */}
           {images.length > 1 && (
             <View style={styles.imgDots}>
               {images.map((_, i) => (
@@ -164,13 +272,15 @@ export default function ProductDetail() {
           )}
         </View>
 
-        {/* ── Product info ── */}
+        {/* Product info */}
         <View style={styles.infoCard}>
           <View style={styles.infoTopRow}>
-            <Text style={styles.categoryTag}>{product.category}</Text>
-            <View style={[styles.stockBadge, { backgroundColor: product.in_stock ? "#dcfce7" : "#fee2e2" }]}>
-              <Text style={[styles.stockText, { color: product.in_stock ? "#16a34a" : "#dc2626" }]}>
-                {product.in_stock ? "In Stock" : "Out of Stock"}
+            {product.category_name && (
+              <Text style={styles.categoryTag}>{product.category_name}</Text>
+            )}
+            <View style={[styles.stockBadge, { backgroundColor: inStock ? "#dcfce7" : "#fee2e2" }]}>
+              <Text style={[styles.stockText, { color: inStock ? "#16a34a" : "#dc2626" }]}>
+                {inStock ? "In Stock" : "Out of Stock"}
               </Text>
             </View>
           </View>
@@ -185,7 +295,7 @@ export default function ProductDetail() {
           </View>
 
           <View style={styles.priceRow}>
-            <Text style={styles.price}>${product.price.toLocaleString()}</Text>
+            <Text style={styles.price}>${effectivePrice.toLocaleString()}</Text>
             {product.original_price && (
               <Text style={styles.originalPrice}>${product.original_price.toLocaleString()}</Text>
             )}
@@ -195,29 +305,26 @@ export default function ProductDetail() {
               </View>
             )}
           </View>
+
+          {product.description && (
+            <Text style={styles.description}>{product.description}</Text>
+          )}
         </View>
 
-        {/* ── Quantity ── */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Quantity</Text>
-            <Text style={styles.sectionSub}>Total: ${(product.price * quantity).toLocaleString()}</Text>
+        {/* Variant selector */}
+        {product.variants.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Options</Text>
+            <VariantSelector
+              variants={product.variants}
+              selectedVariant={selectedVariant}
+              onSelect={setSelectedVariant}
+            />
           </View>
-          <View style={styles.qtyRow}>
-            <TouchableOpacity
-              style={[styles.qtyBtn, quantity <= 1 && styles.qtyBtnDisabled]}
-              onPress={() => setQuantity(q => Math.max(1, q - 1))}
-            >
-              <Text style={styles.qtyBtnText}>−</Text>
-            </TouchableOpacity>
-            <Text style={styles.qtyVal}>{quantity}</Text>
-            <TouchableOpacity style={[styles.qtyBtn, styles.qtyBtnActive]} onPress={() => setQuantity(q => q + 1)}>
-              <Text style={[styles.qtyBtnText, { color: "#fff" }]}>+</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        )}
 
-        {/* ── Details / Reviews tabs ── */}
+
+        {/* Details / Reviews tabs */}
         <View style={styles.section}>
           <View style={styles.tabRow}>
             <TouchableOpacity
@@ -231,7 +338,7 @@ export default function ProductDetail() {
               onPress={() => setActiveTab("reviews")}
             >
               <Text style={[styles.tabText, activeTab === "reviews" && styles.tabTextActive]}>
-                Reviews ({reviews.length})
+                Reviews ({product.review_count})
               </Text>
             </TouchableOpacity>
           </View>
@@ -245,10 +352,10 @@ export default function ProductDetail() {
                     <Text style={styles.detailValue}>{product.brand}</Text>
                   </View>
                 )}
-                {product.category && (
+                {product.category_name && (
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Category</Text>
-                    <Text style={styles.detailValue}>{product.category}</Text>
+                    <Text style={styles.detailValue}>{product.category_name}</Text>
                   </View>
                 )}
                 <View style={styles.detailRow}>
@@ -256,13 +363,9 @@ export default function ProductDetail() {
                   <Text style={styles.detailValue}>{product.rating} / 5.0</Text>
                 </View>
                 <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Reviews</Text>
-                  <Text style={styles.detailValue}>{product.review_count.toLocaleString()}</Text>
-                </View>
-                <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Availability</Text>
-                  <Text style={[styles.detailValue, { color: product.in_stock ? "#16a34a" : "#dc2626" }]}>
-                    {product.in_stock ? "In Stock" : "Out of Stock"}
+                  <Text style={[styles.detailValue, { color: inStock ? "#16a34a" : "#dc2626" }]}>
+                    {inStock ? "In Stock" : "Out of Stock"}
                   </Text>
                 </View>
               </View>
@@ -274,7 +377,7 @@ export default function ProductDetail() {
                 <Stars rating={product.rating} size={18} />
                 <Text style={styles.ratingBigCount}>{product.review_count.toLocaleString()} reviews</Text>
               </View>
-              {reviews.map(r => (
+              {MOCK_REVIEWS.map(r => (
                 <View key={r.id} style={styles.reviewCard}>
                   <View style={styles.reviewTop}>
                     <View style={styles.reviewAvatar}>
@@ -294,33 +397,41 @@ export default function ProductDetail() {
             </View>
           )}
         </View>
-
       </ScrollView>
 
-      {/* ── Bottom bar ── */}
+      {/* Bottom bar */}
       <View style={styles.bottomBar}>
-        <TouchableOpacity
-          style={styles.wishlistBtn}
-          onPress={() => product && toggleWishlist(product)}
-        >
+        <TouchableOpacity style={styles.wishlistBtn} onPress={() => toggleWishlist(product)}>
           <Text style={[styles.wishlistIcon, wishlisted && { color: "#ef4444" }]}>
             {wishlisted ? "♥" : "♡"}
           </Text>
         </TouchableOpacity>
+
         <TouchableOpacity
-          style={[styles.addToCartBtn, addedToCart && styles.addedBtn, !product.in_stock && styles.disabledBtn]}
+          style={[
+            styles.addToCartBtn,
+            addedToCart && styles.addedBtn,
+            (!inStock || needsVariantSelection) && styles.disabledBtn,
+          ]}
           onPress={handleAddToCart}
-          disabled={!product.in_stock}
+          disabled={!inStock || needsVariantSelection}
           activeOpacity={0.88}
         >
           <Text style={styles.addToCartText}>
-            {!product.in_stock ? "Out of Stock" : addedToCart ? "✓  Added to Cart!" : "Add to Cart"}
+            {!inStock
+              ? "Out of Stock"
+              : needsVariantSelection
+                ? "Select Options"
+                : addedToCart
+                  ? "✓ Added!"
+                  : "Add to Cart"}
           </Text>
         </TouchableOpacity>
+
         <TouchableOpacity
-          style={[styles.buyNowBtn, !product.in_stock && styles.disabledBtn]}
-          disabled={!product.in_stock}
-          onPress={() => { handleAddToCart(); router.push("/checkout"); }}
+          style={[styles.buyNowBtn, (!inStock || needsVariantSelection) && styles.disabledBtn]}
+          disabled={!inStock || needsVariantSelection}
+          onPress={async () => { await handleAddToCart(); router.push("/checkout"); }}
           activeOpacity={0.88}
         >
           <Text style={styles.buyNowText}>Buy Now</Text>
@@ -330,6 +441,33 @@ export default function ProductDetail() {
   );
 }
 
+// ── Variant styles ────────────────────────────────────────────────────────────
+const varStyles = StyleSheet.create({
+  container: { gap: 16 },
+  group: { gap: 8 },
+  groupLabel: { fontSize: 13, fontWeight: "700", color: "#374151" },
+  pills: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  pill: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
+    borderWidth: 1.5, borderColor: "#e5e7eb", backgroundColor: "#fff",
+    position: "relative", overflow: "hidden",
+  },
+  pillSelected: { borderColor: "#111827", backgroundColor: "#111827" },
+  pillOutOfStock: { borderColor: "#f3f4f6", backgroundColor: "#f9fafb" },
+  pillText: { fontSize: 13, fontWeight: "600", color: "#374151" },
+  pillTextSelected: { color: "#fff" },
+  pillTextOutOfStock: { color: "#d1d5db" },
+  strikethrough: {
+    position: "absolute", top: "50%", left: 0, right: 0,
+    height: 1, backgroundColor: "#d1d5db",
+  },
+  stockRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
+  stockDot: { width: 8, height: 8, borderRadius: 4 },
+  stockText: { fontSize: 12, color: "#6b7280", fontWeight: "500", flex: 1 },
+  variantPrice: { fontSize: 14, fontWeight: "700", color: "#111827" },
+});
+
+// ── Main styles ───────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#f9fafb" },
   backBtnFallback: { marginTop: 20, backgroundColor: "#111827", paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 },
@@ -338,7 +476,6 @@ const styles = StyleSheet.create({
   heroImg: { width, height: width * 1.0 },
   heroImgPlaceholder: { width, height: width * 1.0, alignItems: "center", justifyContent: "center" },
   imgTopBar: { position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 8, zIndex: 10 },
-  imgTopRight: { flexDirection: "row", gap: 8 },
   iconBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: "rgba(0,0,0,0.35)", alignItems: "center", justifyContent: "center" },
   iconBtnText: { fontSize: 18, color: "#fff", fontWeight: "600" },
   heroBadge: { position: "absolute", bottom: 52, left: 16, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
@@ -346,13 +483,14 @@ const styles = StyleSheet.create({
   imgDots: { position: "absolute", bottom: 16, left: 0, right: 0, flexDirection: "row", justifyContent: "center", gap: 5 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.4)" },
   dotActive: { width: 20, backgroundColor: "#fff" },
-  infoCard: { backgroundColor: "#fff", marginTop: -20, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 16, paddingTop: 20, paddingBottom: 6 },
+  infoCard: { backgroundColor: "#fff", marginTop: -20, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 16, paddingTop: 20, paddingBottom: 16 },
   infoTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   categoryTag: { fontSize: 11, fontWeight: "700", color: "#f97316", backgroundColor: "#fff7ed", paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20, overflow: "hidden" },
   stockBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 },
   stockText: { fontSize: 11, fontWeight: "700" },
   productName: { fontSize: 20, fontWeight: "800", color: "#111827", lineHeight: 26, marginBottom: 3 },
   brandText: { fontSize: 13, color: "#9ca3af", marginBottom: 10, fontWeight: "500" },
+  description: { fontSize: 13, color: "#6b7280", lineHeight: 20, marginTop: 12 },
   ratingRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 12 },
   ratingVal: { fontSize: 13, fontWeight: "700", color: "#111827" },
   ratingCount: { fontSize: 12, color: "#9ca3af" },
@@ -362,15 +500,7 @@ const styles = StyleSheet.create({
   discountBadge: { backgroundColor: "#fee2e2", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
   discountText: { fontSize: 12, fontWeight: "800", color: "#dc2626" },
   section: { backgroundColor: "#fff", marginTop: 8, paddingHorizontal: 16, paddingVertical: 14 },
-  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
-  sectionTitle: { fontSize: 14, fontWeight: "700", color: "#111827" },
-  sectionSub: { fontSize: 14, fontWeight: "700", color: "#f97316" },
-  qtyRow: { flexDirection: "row", alignItems: "center", gap: 0 },
-  qtyBtn: { width: 36, height: 36, borderRadius: 12, borderWidth: 1.5, borderColor: "#e5e7eb", alignItems: "center", justifyContent: "center" },
-  qtyBtnDisabled: { opacity: 0.4 },
-  qtyBtnActive: { backgroundColor: "#111827", borderColor: "#111827" },
-  qtyBtnText: { fontSize: 18, color: "#374151", lineHeight: 22 },
-  qtyVal: { minWidth: 44, textAlign: "center", fontSize: 16, fontWeight: "800", color: "#111827" },
+  sectionTitle: { fontSize: 14, fontWeight: "700", color: "#111827", marginBottom: 12 },
   tabRow: { flexDirection: "row", borderBottomWidth: 1.5, borderBottomColor: "#f3f4f6", marginBottom: 16 },
   tab: { flex: 1, alignItems: "center", paddingBottom: 12 },
   tabActive: { borderBottomWidth: 2, borderBottomColor: "#111827" },
