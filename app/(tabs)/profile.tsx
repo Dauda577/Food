@@ -10,9 +10,45 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
 import { useOrders } from "../../context/OrdersContext";
 import { useWishlist } from "../../context/WishlistContext";
-import { supabase } from "../../lib/supabase"; 
+import { supabase } from "../../lib/supabase";
+import { useBiometrics } from "../../hooks/useBiometrics";
+import { useLocale, LANGUAGES, CURRENCIES } from "../../context/LocaleContext";
+import * as FileSystem from "expo-file-system";
 
+// ── Shared upload helper ──────────────────────────────────────────────────────
+const uploadImageToSupabase = async (uri: string, bucket: string, path: string): Promise<string | null> => {
+  try {
+    // Read as base64
+    const base64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
 
+    // Convert base64 to ArrayBuffer
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .upload(path, bytes.buffer, {
+        contentType: "image/jpeg",
+        upsert: true,
+      });
+
+    if (error) {
+      Alert.alert("Upload Error", error.message);
+      return null;
+    }
+
+    const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(data.path);
+    return urlData.publicUrl;
+  } catch (e: any) {
+    Alert.alert("Upload Error", e.message);
+    return null;
+  }
+};
 
 // ── Status colour map ─────────────────────────────────────────────────────────
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
@@ -134,10 +170,11 @@ export default function ProfileScreen() {
   const { user, profile, signOut, updateProfile } = useAuth();
   const { orders, loading: ordersLoading } = useOrders();
   const { items: wishlistItems } = useWishlist();
+  const { isSupported, isEnabled, biometricType, toggleBiometric } = useBiometrics();
+  const { language, currency } = useLocale();
 
   const [notifications, setNotifications] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
-  const [biometrics, setBiometrics] = useState(false);
   const [editVisible, setEditVisible] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
 
@@ -175,10 +212,8 @@ export default function ProfileScreen() {
     if (error) throw new Error(error);
   };
 
-  // Avatar upload — install expo-image-picker first: npx expo install expo-image-picker
-  // Then uncomment this handler and the edit button's onPress below
+  // Avatar upload using shared helper
   const handlePickAvatar = async () => {
-    // Lazy-load so the app doesn't crash if the package isn't installed yet
     let ImagePicker: typeof import("expo-image-picker");
     try {
       ImagePicker = await import("expo-image-picker");
@@ -192,6 +227,7 @@ export default function ProfileScreen() {
       Alert.alert("Permission needed", "Allow photo access to change your avatar.");
       return;
     }
+
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
@@ -201,22 +237,17 @@ export default function ProfileScreen() {
     if (result.canceled) return;
 
     const asset = result.assets[0];
-    const ext = asset.uri.split(".").pop() ?? "jpg";
-    const path = `avatars/${user!.id}.${ext}`;
+    const path = `${user!.id}.jpg`;  // always .jpg since we're uploading as jpeg
 
     setAvatarUploading(true);
     try {
-      const response = await fetch(asset.uri);
-      const blob = await response.blob();
-      const arrayBuffer = await new Response(blob).arrayBuffer();
+      const avatarUrl = await uploadImageToSupabase(asset.uri, "avatars", path);
+      if (!avatarUrl) return;
 
-      const { error: uploadError } = await supabase.storage
-        .from("avatars")
-        .upload(path, arrayBuffer, { contentType: `image/${ext}`, upsert: true });
-      if (uploadError) throw uploadError;
-
-      const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(path);
-      const { error: updateError } = await updateProfile({ avatar_url: urlData.publicUrl });
+      // Bust the cache so the new image loads immediately
+      const { error: updateError } = await updateProfile({
+        avatar_url: `${avatarUrl}?t=${Date.now()}`
+      });
       if (updateError) throw new Error(updateError);
     } catch (e: any) {
       Alert.alert("Upload failed", e.message ?? "Could not upload avatar.");
@@ -262,6 +293,10 @@ export default function ProfileScreen() {
       });
     } catch { return dateStr; }
   };
+
+  // Get current language name and currency code
+  const currentLanguageName = LANGUAGES.find(l => l.code === language)?.name ?? "English";
+  const currentCurrencyCode = CURRENCIES.find(c => c.code === currency)?.code ?? "GHS";
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -434,20 +469,39 @@ export default function ProfileScreen() {
               }
             />
             <MenuRow
-              icon="finger-print-outline"
-              label="Biometric Login"
+              icon={biometricType === "face" ? "scan-outline" : "finger-print-outline"}
+              label={biometricType === "face" ? "Face ID Login" : "Fingerprint Login"}
               rightElement={
-                <Switch
-                  value={biometrics}
-                  onValueChange={setBiometrics}
-                  trackColor={{ false: "#e5e7eb", true: "#f97316" }}
-                  thumbColor="#fff"
-                  style={{ transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }] }}
-                />
+                isSupported ? (
+                  <Switch
+                    value={isEnabled}
+                    onValueChange={async (val) => {
+                      const result = await toggleBiometric(val);
+                      if (!result.success && result.error) {
+                        Alert.alert("Biometric Login", result.error);
+                      }
+                    }}
+                    trackColor={{ false: "#e5e7eb", true: "#f97316" }}
+                    thumbColor="#fff"
+                    style={{ transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }] }}
+                  />
+                ) : (
+                  <Text style={{ fontSize: 11, color: "#9ca3af" }}>Not supported</Text>
+                )
               }
             />
-            <MenuRow icon="language-outline" label="Language" value="English" onPress={() => { }} />
-            <MenuRow icon="cash-outline" label="Currency" value="GHS (₵)" onPress={() => { }} />
+            <MenuRow
+              icon="language-outline"
+              label="Language"
+              value={currentLanguageName}
+              onPress={() => router.push("/language-currency")}
+            />
+            <MenuRow
+              icon="cash-outline"
+              label="Currency"
+              value={currentCurrencyCode}
+              onPress={() => router.push("/language-currency")}
+            />
           </View>
         </View>
 

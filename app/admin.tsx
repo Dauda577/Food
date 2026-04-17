@@ -9,6 +9,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
+import * as ImagePicker from "expo-image-picker";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Order = {
@@ -18,12 +19,23 @@ type Order = {
 };
 type Product = {
     id: string; name: string; brand: string | null; price: number;
-    original_price: number | null; category: string | null;
+    original_price: number | null; category_id: string | null;
+    images: string[] | null; image: string | null;
+    description: string | null;
     in_stock: boolean; rating: number; review_count: number; badge: string | null;
 };
 type UserProfile = {
     id: string; name: string | null; phone: string | null;
     avatar_url: string | null; is_admin: boolean; created_at: string;
+};
+type Category = {
+    id: string;
+    name: string;
+    slug: string;
+    parent_id: string | null;
+    icon: string | null;
+    image: string | null;
+    created_at: string;
 };
 type Analytics = {
     totalRevenue: number; totalOrders: number; totalUsers: number;
@@ -32,13 +44,14 @@ type Analytics = {
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const TABS = ["Analytics", "Orders", "Products", "Users", "Notify"] as const;
+const TABS = ["Analytics", "Orders", "Products", "Categories", "Users", "Notify"] as const;
 type Tab = typeof TABS[number];
 
 const TAB_ICONS: Record<Tab, string> = {
     Analytics: "bar-chart-outline",
     Orders: "receipt-outline",
     Products: "cube-outline",
+    Categories: "grid-outline",
     Users: "people-outline",
     Notify: "megaphone-outline",
 };
@@ -57,6 +70,34 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
 const STATUS_LABELS: Record<string, string> = {
     pending: "Pending", processing: "Processing", in_transit: "In Transit",
     out_for_delivery: "Out for Delivery", delivered: "Delivered", cancelled: "Cancelled",
+};
+
+// ── Image upload helper ───────────────────────────────────────────────────────
+const uploadImageToSupabase = async (uri: string): Promise<string | null> => {
+    try {
+        const filename = `products/${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
+
+        const response = await fetch(uri);
+        const blob = await response.blob();
+
+        const { data, error } = await supabase.storage
+            .from("product-images")
+            .upload(filename, blob, { contentType: "image/jpeg", upsert: false });
+
+        if (error) {
+            Alert.alert("Upload Error", error.message);
+            return null;
+        }
+
+        const { data: urlData } = supabase.storage
+            .from("product-images")
+            .getPublicUrl(data.path);
+
+        return urlData.publicUrl;
+    } catch (e: any) {
+        Alert.alert("Upload Error", e.message);
+        return null;
+    }
 };
 
 // ── Small shared components ───────────────────────────────────────────────────
@@ -88,7 +129,6 @@ function AnalyticsTab({ analytics, loading }: { analytics: Analytics | null; loa
 
     return (
         <ScrollView contentContainerStyle={adminStyles.tabContent}>
-            {/* KPI grid */}
             <Text style={adminStyles.tabSectionTitle}>Overview</Text>
             <View style={adminStyles.statGrid}>
                 <StatCard label="Total Revenue" value={`GH₵${analytics.totalRevenue.toLocaleString()}`} icon="cash-outline" color="#f97316" />
@@ -97,14 +137,12 @@ function AnalyticsTab({ analytics, loading }: { analytics: Analytics | null; loa
                 <StatCard label="Products" value={String(analytics.totalProducts)} icon="cube-outline" color="#16a34a" />
             </View>
 
-            {/* Today */}
             <Text style={adminStyles.tabSectionTitle}>Today</Text>
             <View style={adminStyles.statGrid}>
                 <StatCard label="Revenue Today" value={`GH₵${analytics.revenueToday.toLocaleString()}`} icon="trending-up-outline" color="#f97316" />
                 <StatCard label="Orders Today" value={String(analytics.ordersToday)} icon="bag-outline" color="#2563eb" />
             </View>
 
-            {/* Order breakdown */}
             <Text style={adminStyles.tabSectionTitle}>Orders by Status</Text>
             <View style={adminStyles.card}>
                 {ORDER_STATUSES.map(s => {
@@ -124,7 +162,6 @@ function AnalyticsTab({ analytics, loading }: { analytics: Analytics | null; loa
                 })}
             </View>
 
-            {/* Revenue bar chart */}
             {analytics.recentRevenue.length > 0 && (
                 <>
                     <Text style={adminStyles.tabSectionTitle}>Revenue (Last 7 Days)</Text>
@@ -194,7 +231,6 @@ function OrdersTab({ orders, loading, onRefresh, refreshing }: {
             contentContainerStyle={adminStyles.tabContent}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#f97316" />}
         >
-            {/* Search */}
             <View style={adminStyles.searchRow}>
                 <Ionicons name="search-outline" size={16} color="#9ca3af" style={{ marginRight: 8 }} />
                 <TextInput
@@ -206,7 +242,6 @@ function OrdersTab({ orders, loading, onRefresh, refreshing }: {
                 />
             </View>
 
-            {/* Status filter pills */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
                 {["all", ...ORDER_STATUSES].map(s => (
                     <TouchableOpacity
@@ -247,7 +282,6 @@ function OrdersTab({ orders, loading, onRefresh, refreshing }: {
                                 })}
                             </Text>
 
-                            {/* Quick status change */}
                             <View style={adminStyles.statusActions}>
                                 {ORDER_STATUSES.filter(s => s !== order.status).map(s => (
                                     <TouchableOpacity
@@ -270,32 +304,303 @@ function OrdersTab({ orders, loading, onRefresh, refreshing }: {
     );
 }
 
+// ── Categories Tab ────────────────────────────────────────────────────────────
+type CategoryForm = { name: string; slug: string; icon: string; image: string; parent_id: string };
+
+function CategoryFormModal({ visible, onClose, onSave, saving, title, categories, initial }: {
+    visible: boolean; onClose: () => void;
+    onSave: (form: CategoryForm) => Promise<void>;
+    saving: boolean; title: string;
+    categories: Category[]; initial: CategoryForm;
+}) {
+    const [form, setForm] = useState<CategoryForm>(initial);
+    useEffect(() => { if (visible) setForm(initial); }, [visible]);
+
+    const set = (key: keyof CategoryForm, val: string) => setForm(prev => ({ ...prev, [key]: val }));
+
+    const slugify = (text: string) =>
+        text.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+
+    return (
+        <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+            <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+                <SafeAreaView style={adminStyles.modalSafe}>
+                    <View style={adminStyles.modalHeader}>
+                        <TouchableOpacity onPress={onClose}>
+                            <Text style={adminStyles.modalCancel}>Cancel</Text>
+                        </TouchableOpacity>
+                        <Text style={adminStyles.modalTitle}>{title}</Text>
+                        <TouchableOpacity onPress={() => onSave(form)} disabled={saving}>
+                            {saving
+                                ? <ActivityIndicator size="small" color="#f97316" />
+                                : <Text style={adminStyles.modalSave}>Save</Text>}
+                        </TouchableOpacity>
+                    </View>
+
+                    <ScrollView contentContainerStyle={{ padding: 20 }} keyboardShouldPersistTaps="handled">
+
+                        <Text style={adminStyles.fieldLabel}>Name *</Text>
+                        <TextInput
+                            style={adminStyles.fieldInput}
+                            value={form.name}
+                            onChangeText={v => { set("name", v); set("slug", slugify(v)); }}
+                            placeholder="e.g. Electronics"
+                            placeholderTextColor="#9ca3af"
+                        />
+
+                        <Text style={adminStyles.fieldLabel}>Slug *</Text>
+                        <TextInput
+                            style={adminStyles.fieldInput}
+                            value={form.slug}
+                            onChangeText={v => set("slug", v)}
+                            placeholder="e.g. electronics"
+                            placeholderTextColor="#9ca3af"
+                            autoCapitalize="none"
+                        />
+
+                        <Text style={adminStyles.fieldLabel}>Icon (emoji)</Text>
+                        <TextInput
+                            style={adminStyles.fieldInput}
+                            value={form.icon}
+                            onChangeText={v => set("icon", v)}
+                            placeholder="e.g. 📱"
+                            placeholderTextColor="#9ca3af"
+                        />
+
+                        <Text style={adminStyles.fieldLabel}>Image URL</Text>
+                        <TextInput
+                            style={adminStyles.fieldInput}
+                            value={form.image}
+                            onChangeText={v => set("image", v)}
+                            placeholder="https://..."
+                            placeholderTextColor="#9ca3af"
+                            autoCapitalize="none"
+                            keyboardType="url"
+                        />
+
+                        <Text style={adminStyles.fieldLabel}>Parent Category (optional)</Text>
+                        <ScrollView
+                            style={[adminStyles.userPickerList, { maxHeight: 180 }]}
+                            nestedScrollEnabled
+                        >
+                            <TouchableOpacity
+                                style={[adminStyles.userPickerRow, !form.parent_id && adminStyles.userPickerRowActive]}
+                                onPress={() => set("parent_id", "")}
+                            >
+                                <Text style={[adminStyles.userPickerName, !form.parent_id && { color: "#f97316" }]}>
+                                    None (top-level)
+                                </Text>
+                                {!form.parent_id && <Ionicons name="checkmark" size={16} color="#f97316" />}
+                            </TouchableOpacity>
+                            {categories.filter(c => !c.parent_id).map(cat => (
+                                <TouchableOpacity
+                                    key={cat.id}
+                                    style={[adminStyles.userPickerRow, form.parent_id === cat.id && adminStyles.userPickerRowActive]}
+                                    onPress={() => set("parent_id", cat.id)}
+                                >
+                                    <View style={adminStyles.rowGap}>
+                                        {cat.icon && <Text>{cat.icon}</Text>}
+                                        <Text style={[adminStyles.userPickerName, form.parent_id === cat.id && { color: "#f97316" }]}>
+                                            {cat.name}
+                                        </Text>
+                                    </View>
+                                    {form.parent_id === cat.id && <Ionicons name="checkmark" size={16} color="#f97316" />}
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+
+                    </ScrollView>
+                </SafeAreaView>
+            </KeyboardAvoidingView>
+        </Modal>
+    );
+}
+
+function CategoriesTab({ categories, loading, onRefresh, refreshing }: {
+    categories: Category[]; loading: boolean; onRefresh: () => void; refreshing: boolean;
+}) {
+    const [addVisible, setAddVisible] = useState(false);
+    const [editCat, setEditCat] = useState<Category | null>(null);
+    const [saving, setSaving] = useState(false);
+
+    const slugify = (text: string) =>
+        text.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+
+    const handleAdd = async (form: { name: string; slug: string; icon: string; image: string; parent_id: string }) => {
+        setSaving(true);
+        const { error } = await supabase.from("categories").insert({
+            name: form.name.trim(),
+            slug: form.slug.trim() || slugify(form.name),
+            icon: form.icon.trim() || null,
+            image: form.image.trim() || null,
+            parent_id: form.parent_id || null,
+        });
+        setSaving(false);
+        if (error) { Alert.alert("Error", error.message); return; }
+        setAddVisible(false);
+        onRefresh();
+    };
+
+    const handleEdit = async (form: { name: string; slug: string; icon: string; image: string; parent_id: string }) => {
+        if (!editCat) return;
+        setSaving(true);
+        const { error } = await supabase.from("categories").update({
+            name: form.name.trim(),
+            slug: form.slug.trim() || slugify(form.name),
+            icon: form.icon.trim() || null,
+            image: form.image.trim() || null,
+            parent_id: form.parent_id || null,
+        }).eq("id", editCat.id);
+        setSaving(false);
+        if (error) { Alert.alert("Error", error.message); return; }
+        setEditCat(null);
+        onRefresh();
+    };
+
+    const confirmDelete = (cat: Category) => {
+        Alert.alert(
+            "Delete Category",
+            `Delete "${cat.name}"? Products linked to it will lose their category.`,
+            [
+                { text: "Cancel", style: "cancel" },
+                {
+                    text: "Delete", style: "destructive", onPress: async () => {
+                        const { error } = await supabase.from("categories").delete().eq("id", cat.id);
+                        if (error) Alert.alert("Error", error.message);
+                        else onRefresh();
+                    },
+                },
+            ]
+        );
+    };
+
+    const topLevel = categories.filter(c => !c.parent_id);
+    const subCategories = categories.filter(c => c.parent_id);
+
+    if (loading) return <View style={adminStyles.centered}><ActivityIndicator size="large" color="#f97316" /></View>;
+
+    return (
+        <>
+            <ScrollView
+                contentContainerStyle={adminStyles.tabContent}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#f97316" />}
+            >
+                <TouchableOpacity style={[adminStyles.addBtn, { alignSelf: "flex-end", marginBottom: 12, width: "auto", paddingHorizontal: 16, flexDirection: "row", gap: 6 }]} onPress={() => setAddVisible(true)}>
+                    <Ionicons name="add" size={18} color="#fff" />
+                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Add Category</Text>
+                </TouchableOpacity>
+
+                <SectionHeader title="Top-level Categories" count={topLevel.length} />
+                {topLevel.map(cat => {
+                    const children = subCategories.filter(s => s.parent_id === cat.id);
+                    return (
+                        <View key={cat.id} style={adminStyles.card}>
+                            <View style={adminStyles.rowBetween}>
+                                <View style={adminStyles.rowGap}>
+                                    {cat.icon && <Text style={{ fontSize: 20 }}>{cat.icon}</Text>}
+                                    <View>
+                                        <Text style={adminStyles.productName}>{cat.name}</Text>
+                                        <Text style={adminStyles.productMeta}>/{cat.slug}</Text>
+                                    </View>
+                                </View>
+                                <View style={adminStyles.rowGap}>
+                                    <TouchableOpacity style={adminStyles.editBtn} onPress={() => setEditCat(cat)}>
+                                        <Ionicons name="create-outline" size={15} color="#f97316" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={adminStyles.deleteBtn} onPress={() => confirmDelete(cat)}>
+                                        <Ionicons name="trash-outline" size={15} color="#ef4444" />
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+
+                            {children.length > 0 && (
+                                <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#f3f4f6" }}>
+                                    <Text style={{ fontSize: 11, color: "#9ca3af", fontWeight: "600", marginBottom: 6 }}>
+                                        SUBCATEGORIES ({children.length})
+                                    </Text>
+                                    {children.map(sub => (
+                                        <View key={sub.id} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 }}>
+                                            <View style={adminStyles.rowGap}>
+                                                <View style={{ width: 12, height: 1, backgroundColor: "#e5e7eb" }} />
+                                                {sub.icon && <Text style={{ fontSize: 14 }}>{sub.icon}</Text>}
+                                                <Text style={{ fontSize: 13, color: "#374151" }}>{sub.name}</Text>
+                                                <Text style={adminStyles.productMeta}>/{sub.slug}</Text>
+                                            </View>
+                                            <View style={adminStyles.rowGap}>
+                                                <TouchableOpacity style={adminStyles.editBtn} onPress={() => setEditCat(sub)}>
+                                                    <Ionicons name="create-outline" size={13} color="#f97316" />
+                                                </TouchableOpacity>
+                                                <TouchableOpacity style={adminStyles.deleteBtn} onPress={() => confirmDelete(sub)}>
+                                                    <Ionicons name="trash-outline" size={13} color="#ef4444" />
+                                                </TouchableOpacity>
+                                            </View>
+                                        </View>
+                                    ))}
+                                </View>
+                            )}
+                        </View>
+                    );
+                })}
+            </ScrollView>
+
+            <CategoryFormModal
+                visible={addVisible}
+                onClose={() => setAddVisible(false)}
+                onSave={handleAdd}
+                saving={saving}
+                title="Add Category"
+                categories={categories}
+                initial={{ name: "", slug: "", icon: "", image: "", parent_id: "" }}
+            />
+
+            <CategoryFormModal
+                visible={!!editCat}
+                onClose={() => setEditCat(null)}
+                onSave={handleEdit}
+                saving={saving}
+                title="Edit Category"
+                categories={categories.filter(c => c.id !== editCat?.id)}
+                initial={editCat ? {
+                    name: editCat.name,
+                    slug: editCat.slug,
+                    icon: editCat.icon ?? "",
+                    image: editCat.image ?? "",
+                    parent_id: editCat.parent_id ?? "",
+                } : { name: "", slug: "", icon: "", image: "", parent_id: "" }}
+            />
+        </>
+    );
+}
+
 // ── Product Form (shared by Add + Edit) ───────────────────────────────────────
 type ProductForm = {
     name: string; brand: string; price: string; original_price: string;
-    category: string; description: string; image: string; badge: string;
-    in_stock: boolean;
+    category_id: string; description: string;
+    images: string[];
+    badge: string; in_stock: boolean;
 };
 
 const EMPTY_FORM: ProductForm = {
     name: "", brand: "", price: "", original_price: "",
-    category: "", description: "", image: "", badge: "", in_stock: true,
+    category_id: "", description: "", images: [], badge: "", in_stock: true,
 };
 
 const BADGE_OPTIONS = ["", "New", "Sale", "Hot", "Limited", "Bestseller"];
 
 function ProductFormModal({
-    visible, onClose, onSave, saving, title, initial,
+    visible, onClose, onSave, saving, title, initial, categories,
 }: {
     visible: boolean; onClose: () => void;
     onSave: (form: ProductForm) => Promise<void>;
     saving: boolean; title: string; initial: ProductForm;
+    categories: Category[];
 }) {
     const [form, setForm] = useState<ProductForm>(initial);
+    const [uploading, setUploading] = useState(false);
 
     useEffect(() => { if (visible) setForm(initial); }, [visible]);
 
-    const set = (key: keyof ProductForm, val: string | boolean) =>
+    const set = (key: keyof ProductForm, val: string | boolean | string[]) =>
         setForm(prev => ({ ...prev, [key]: val }));
 
     const handleSave = async () => {
@@ -305,18 +610,49 @@ function ProductFormModal({
         await onSave(form);
     };
 
+    const pickImages = async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== "granted") {
+            Alert.alert("Permission needed", "Allow access to your photo library to pick images.");
+            return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsMultipleSelection: true,
+            quality: 0.8,
+            selectionLimit: 5,
+        });
+
+        if (result.canceled) return;
+
+        setUploading(true);
+        Alert.alert("Uploading...", "Please wait while your images upload.");
+
+        const uploadedUrls: string[] = [];
+        for (const asset of result.assets) {
+            const url = await uploadImageToSupabase(asset.uri);
+            if (url) uploadedUrls.push(url);
+        }
+
+        if (uploadedUrls.length > 0) {
+            set("images", [...form.images, ...uploadedUrls]);
+            Alert.alert("Done!", `${uploadedUrls.length} image(s) added.`);
+        }
+        setUploading(false);
+    };
+
     return (
         <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
             <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
                 <SafeAreaView style={adminStyles.modalSafe}>
-                    {/* Header */}
                     <View style={adminStyles.modalHeader}>
                         <TouchableOpacity onPress={onClose}>
                             <Text style={adminStyles.modalCancel}>Cancel</Text>
                         </TouchableOpacity>
                         <Text style={adminStyles.modalTitle}>{title}</Text>
-                        <TouchableOpacity onPress={handleSave} disabled={saving}>
-                            {saving
+                        <TouchableOpacity onPress={handleSave} disabled={saving || uploading}>
+                            {saving || uploading
                                 ? <ActivityIndicator size="small" color="#f97316" />
                                 : <Text style={adminStyles.modalSave}>Save</Text>}
                         </TouchableOpacity>
@@ -324,7 +660,6 @@ function ProductFormModal({
 
                     <ScrollView contentContainerStyle={{ padding: 20 }} keyboardShouldPersistTaps="handled">
 
-                        {/* Basic info */}
                         <Text style={adminStyles.formSection}>Basic Info</Text>
 
                         <Text style={adminStyles.fieldLabel}>Product Name *</Text>
@@ -336,8 +671,36 @@ function ProductFormModal({
                             placeholder="e.g. Nike" placeholderTextColor="#9ca3af" />
 
                         <Text style={adminStyles.fieldLabel}>Category</Text>
-                        <TextInput style={adminStyles.fieldInput} value={form.category} onChangeText={v => set("category", v)}
-                            placeholder="e.g. Footwear" placeholderTextColor="#9ca3af" />
+                        <ScrollView
+                            style={[adminStyles.userPickerList, { maxHeight: 160 }]}
+                            nestedScrollEnabled
+                        >
+                            <TouchableOpacity
+                                style={[adminStyles.userPickerRow, !form.category_id && adminStyles.userPickerRowActive]}
+                                onPress={() => set("category_id", "")}
+                            >
+                                <Text style={[adminStyles.userPickerName, !form.category_id && { color: "#f97316" }]}>
+                                    None
+                                </Text>
+                                {!form.category_id && <Ionicons name="checkmark" size={16} color="#f97316" />}
+                            </TouchableOpacity>
+                            {categories.map(cat => (
+                                <TouchableOpacity
+                                    key={cat.id}
+                                    style={[adminStyles.userPickerRow, form.category_id === cat.id && adminStyles.userPickerRowActive]}
+                                    onPress={() => set("category_id", cat.id)}
+                                >
+                                    <View style={adminStyles.rowGap}>
+                                        {cat.icon && <Text>{cat.icon}</Text>}
+                                        <Text style={[adminStyles.userPickerName, form.category_id === cat.id && { color: "#f97316" }]}>
+                                            {cat.name}
+                                            {cat.parent_id && <Text style={{ color: "#9ca3af" }}> (sub)</Text>}
+                                        </Text>
+                                    </View>
+                                    {form.category_id === cat.id && <Ionicons name="checkmark" size={16} color="#f97316" />}
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
 
                         <Text style={adminStyles.fieldLabel}>Description</Text>
                         <TextInput style={[adminStyles.fieldInput, adminStyles.fieldInputMulti]}
@@ -345,7 +708,6 @@ function ProductFormModal({
                             placeholder="Product description..." placeholderTextColor="#9ca3af"
                             multiline numberOfLines={4} textAlignVertical="top" />
 
-                        {/* Pricing */}
                         <Text style={adminStyles.formSection}>Pricing</Text>
 
                         <Text style={adminStyles.fieldLabel}>Price (GH₵) *</Text>
@@ -356,15 +718,53 @@ function ProductFormModal({
                         <TextInput style={adminStyles.fieldInput} value={form.original_price} onChangeText={v => set("original_price", v)}
                             placeholder="Optional" placeholderTextColor="#9ca3af" keyboardType="decimal-pad" />
 
-                        {/* Media */}
-                        <Text style={adminStyles.formSection}>Media</Text>
+                        <Text style={adminStyles.formSection}>Images</Text>
 
-                        <Text style={adminStyles.fieldLabel}>Image URL</Text>
-                        <TextInput style={adminStyles.fieldInput} value={form.image} onChangeText={v => set("image", v)}
-                            placeholder="https://..." placeholderTextColor="#9ca3af"
-                            autoCapitalize="none" keyboardType="url" />
+                        {form.images.map((img, i) => (
+                            <View key={i} style={[adminStyles.rowGap, { marginBottom: 8 }]}>
+                                <TextInput
+                                    style={[adminStyles.fieldInput, { flex: 1, marginBottom: 0 }]}
+                                    value={img}
+                                    onChangeText={v => {
+                                        const next = [...form.images];
+                                        next[i] = v;
+                                        set("images", next);
+                                    }}
+                                    placeholder={`Image URL ${i + 1}`}
+                                    placeholderTextColor="#9ca3af"
+                                    autoCapitalize="none"
+                                    keyboardType="url"
+                                />
+                                <TouchableOpacity
+                                    style={adminStyles.deleteBtn}
+                                    onPress={() => set("images", form.images.filter((_, j) => j !== i))}
+                                >
+                                    <Ionicons name="trash-outline" size={14} color="#ef4444" />
+                                </TouchableOpacity>
+                            </View>
+                        ))}
 
-                        {/* Badge */}
+                        <View style={[adminStyles.rowGap, { marginBottom: 16 }]}>
+                            <TouchableOpacity
+                                style={[adminStyles.pill, { backgroundColor: "#eff6ff", flexDirection: "row", gap: 6 }]}
+                                onPress={pickImages}
+                                disabled={uploading}
+                            >
+                                <Ionicons name="images-outline" size={14} color="#2563eb" />
+                                <Text style={[adminStyles.pillText, { color: "#2563eb" }]}>
+                                    {uploading ? "Uploading..." : "Pick from Gallery"}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={adminStyles.pill}
+                                onPress={() => set("images", [...form.images, ""])}
+                            >
+                                <Ionicons name="link-outline" size={14} color="#6b7280" />
+                                <Text style={adminStyles.pillText}>Add URL</Text>
+                            </TouchableOpacity>
+                        </View>
+
                         <Text style={adminStyles.formSection}>Badge</Text>
                         <View style={adminStyles.badgeRow}>
                             {BADGE_OPTIONS.map(b => (
@@ -380,7 +780,6 @@ function ProductFormModal({
                             ))}
                         </View>
 
-                        {/* Availability */}
                         <Text style={adminStyles.formSection}>Availability</Text>
                         <View style={[adminStyles.card, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}>
                             <View>
@@ -405,8 +804,8 @@ function ProductFormModal({
 }
 
 // ── Products Tab ──────────────────────────────────────────────────────────────
-function ProductsTab({ products, loading, onRefresh, refreshing }: {
-    products: Product[]; loading: boolean; onRefresh: () => void; refreshing: boolean;
+function ProductsTab({ products, categories, loading, onRefresh, refreshing }: {
+    products: Product[]; categories: Category[]; loading: boolean; onRefresh: () => void; refreshing: boolean;
 }) {
     const [search, setSearch] = useState("");
     const [editProduct, setEdit] = useState<Product | null>(null);
@@ -419,7 +818,6 @@ function ProductsTab({ products, loading, onRefresh, refreshing }: {
         (p.brand ?? "").toLowerCase().includes(search.toLowerCase())
     );
 
-    // ── Add new product ────────────────────────────────────────────────────────
     const handleAdd = async (form: ProductForm) => {
         setSaving(true);
         const { error } = await supabase.from("products").insert({
@@ -427,9 +825,10 @@ function ProductsTab({ products, loading, onRefresh, refreshing }: {
             brand: form.brand.trim() || null,
             price: parseFloat(form.price),
             original_price: form.original_price ? parseFloat(form.original_price) : null,
-            category: form.category.trim() || null,
+            category_id: form.category_id || null,
             description: form.description.trim() || null,
-            image: form.image.trim() || null,
+            images: form.images.filter(Boolean),
+            image: form.images[0] ?? null,
             badge: form.badge || null,
             in_stock: form.in_stock,
             rating: 0,
@@ -442,7 +841,6 @@ function ProductsTab({ products, loading, onRefresh, refreshing }: {
         Alert.alert("Added!", `"${form.name}" has been added to your store.`);
     };
 
-    // ── Edit existing product ─────────────────────────────────────────────────
     const handleEdit = async (form: ProductForm) => {
         if (!editProduct) return;
         setSaving(true);
@@ -451,9 +849,10 @@ function ProductsTab({ products, loading, onRefresh, refreshing }: {
             brand: form.brand.trim() || null,
             price: parseFloat(form.price),
             original_price: form.original_price ? parseFloat(form.original_price) : null,
-            category: form.category.trim() || null,
+            category_id: form.category_id || null,
             description: form.description.trim() || null,
-            image: form.image.trim() || null,
+            images: form.images.filter(Boolean),
+            image: form.images[0] ?? null,
             badge: form.badge || null,
             in_stock: form.in_stock,
         }).eq("id", editProduct.id);
@@ -463,7 +862,6 @@ function ProductsTab({ products, loading, onRefresh, refreshing }: {
         await onRefresh();
     };
 
-    // ── Delete product ────────────────────────────────────────────────────────
     const confirmDelete = (p: Product) => {
         Alert.alert(
             "Delete Product",
@@ -481,10 +879,14 @@ function ProductsTab({ products, loading, onRefresh, refreshing }: {
         );
     };
 
-    // ── Toggle stock ──────────────────────────────────────────────────────────
     const toggleStock = async (p: Product) => {
         await supabase.from("products").update({ in_stock: !p.in_stock }).eq("id", p.id);
         onRefresh();
+    };
+
+    const getCategoryName = (categoryId: string | null) => {
+        if (!categoryId) return "—";
+        return categories.find(c => c.id === categoryId)?.name ?? "—";
     };
 
     if (loading) return <View style={adminStyles.centered}><ActivityIndicator size="large" color="#f97316" /></View>;
@@ -495,7 +897,6 @@ function ProductsTab({ products, loading, onRefresh, refreshing }: {
                 contentContainerStyle={adminStyles.tabContent}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#f97316" />}
             >
-                {/* Search + Add row */}
                 <View style={adminStyles.searchAddRow}>
                     <View style={[adminStyles.searchRow, { flex: 1, marginBottom: 0 }]}>
                         <Ionicons name="search-outline" size={16} color="#9ca3af" style={{ marginRight: 8 }} />
@@ -529,7 +930,7 @@ function ProductsTab({ products, loading, onRefresh, refreshing }: {
                             <View style={adminStyles.rowBetween}>
                                 <View style={{ flex: 1, marginRight: 8 }}>
                                     <Text style={adminStyles.productName} numberOfLines={1}>{p.name}</Text>
-                                    <Text style={adminStyles.productMeta}>{p.brand ?? "—"} · {p.category ?? "—"}</Text>
+                                    <Text style={adminStyles.productMeta}>{p.brand ?? "—"} · {getCategoryName(p.category_id)}</Text>
                                 </View>
                                 <View style={adminStyles.rowGap}>
                                     <TouchableOpacity style={adminStyles.editBtn} onPress={() => setEdit(p)}>
@@ -569,7 +970,6 @@ function ProductsTab({ products, loading, onRefresh, refreshing }: {
                 )}
             </ScrollView>
 
-            {/* Add Product Modal */}
             <ProductFormModal
                 visible={addVisible}
                 onClose={() => setAddVisible(false)}
@@ -577,9 +977,9 @@ function ProductsTab({ products, loading, onRefresh, refreshing }: {
                 saving={saving}
                 title="Add Product"
                 initial={EMPTY_FORM}
+                categories={categories}
             />
 
-            {/* Edit Product Modal */}
             <ProductFormModal
                 visible={!!editProduct}
                 onClose={() => setEdit(null)}
@@ -591,12 +991,13 @@ function ProductsTab({ products, loading, onRefresh, refreshing }: {
                     brand: editProduct.brand ?? "",
                     price: String(editProduct.price),
                     original_price: editProduct.original_price ? String(editProduct.original_price) : "",
-                    category: editProduct.category ?? "",
-                    description: "",
-                    image: "",
+                    category_id: editProduct.category_id ?? "",
+                    description: editProduct.description ?? "",
+                    images: editProduct.images ?? [],
                     badge: editProduct.badge ?? "",
                     in_stock: editProduct.in_stock,
                 } : EMPTY_FORM}
+                categories={categories}
             />
         </>
     );
@@ -751,7 +1152,6 @@ function NotifyTab({ users }: { users: UserProfile[] }) {
         <ScrollView contentContainerStyle={adminStyles.tabContent} keyboardShouldPersistTaps="handled">
             <SectionHeader title="Send Notification" />
 
-            {/* Type picker */}
             <Text style={adminStyles.fieldLabel}>Type</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
                 {NOTIF_TYPES.map(nt => (
@@ -766,7 +1166,6 @@ function NotifyTab({ users }: { users: UserProfile[] }) {
                 ))}
             </ScrollView>
 
-            {/* Recipient */}
             <Text style={adminStyles.fieldLabel}>Recipients</Text>
             <View style={adminStyles.rowGap}>
                 {(["all", "single"] as const).map(t => (
@@ -802,7 +1201,6 @@ function NotifyTab({ users }: { users: UserProfile[] }) {
                 </>
             )}
 
-            {/* Title */}
             <Text style={[adminStyles.fieldLabel, { marginTop: 16 }]}>Title</Text>
             <TextInput
                 style={adminStyles.fieldInput}
@@ -814,7 +1212,6 @@ function NotifyTab({ users }: { users: UserProfile[] }) {
             />
             <Text style={adminStyles.charCount}>{title.length}/80</Text>
 
-            {/* Body */}
             <Text style={adminStyles.fieldLabel}>Body</Text>
             <TextInput
                 style={[adminStyles.fieldInput, adminStyles.fieldInputMulti]}
@@ -828,7 +1225,6 @@ function NotifyTab({ users }: { users: UserProfile[] }) {
             />
             <Text style={adminStyles.charCount}>{body.length}/200</Text>
 
-            {/* Action route (optional) */}
             <Text style={adminStyles.fieldLabel}>Action Route (optional)</Text>
             <TextInput
                 style={adminStyles.fieldInput}
@@ -839,7 +1235,6 @@ function NotifyTab({ users }: { users: UserProfile[] }) {
                 autoCapitalize="none"
             />
 
-            {/* Preview */}
             {(title || body) && (
                 <View style={adminStyles.previewCard}>
                     <Text style={adminStyles.previewLabel}>Preview</Text>
@@ -855,7 +1250,6 @@ function NotifyTab({ users }: { users: UserProfile[] }) {
                 </View>
             )}
 
-            {/* Send */}
             <TouchableOpacity style={adminStyles.sendBtn} onPress={send} disabled={sending}>
                 {sending
                     ? <ActivityIndicator color="#fff" />
@@ -880,11 +1274,11 @@ export default function AdminScreen() {
     const [analytics, setAnalytics] = useState<Analytics | null>(null);
     const [orders, setOrders] = useState<Order[]>([]);
     const [products, setProducts] = useState<Product[]>([]);
+    const [categories, setCategories] = useState<Category[]>([]);
     const [users, setUsers] = useState<UserProfile[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
-    // Gate: redirect non-admins immediately
     useEffect(() => {
         if (profile && !profile.is_admin) {
             Alert.alert("Access Denied", "You don't have admin privileges.");
@@ -892,25 +1286,26 @@ export default function AdminScreen() {
         }
     }, [profile]);
 
-    // ── Data fetching ─────────────────────────────────────────────────────────
     const fetchAll = useCallback(async () => {
         if (!user?.id) return;
 
-        const [ordersRes, productsRes, usersRes] = await Promise.all([
+        const [ordersRes, productsRes, usersRes, categoriesRes] = await Promise.all([
             supabase.from("orders").select("*, profiles(name)").order("created_at", { ascending: false }),
             supabase.from("products").select("*").order("name"),
             supabase.from("profiles").select("*").order("created_at", { ascending: false }),
+            supabase.from("categories").select("*").order("name"),
         ]);
 
         const allOrders = (ordersRes.data ?? []) as Order[];
         const allProducts = (productsRes.data ?? []) as Product[];
         const allUsers = (usersRes.data ?? []) as UserProfile[];
+        const allCategories = (categoriesRes.data ?? []) as Category[];
 
         setOrders(allOrders);
         setProducts(allProducts);
         setUsers(allUsers);
+        setCategories(allCategories);
 
-        // Build analytics
         const todayStr = new Date().toDateString();
         const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
 
@@ -918,7 +1313,6 @@ export default function AdminScreen() {
         ORDER_STATUSES.forEach(s => { ordersByStatus[s] = 0; });
         allOrders.forEach(o => { if (ordersByStatus[o.status] !== undefined) ordersByStatus[o.status]++; });
 
-        // Revenue per day for last 7 days
         const revenueMap: Record<string, number> = {};
         for (let i = 6; i >= 0; i--) {
             const d = new Date(); d.setDate(d.getDate() - i);
@@ -956,7 +1350,6 @@ export default function AdminScreen() {
         setRefreshing(false);
     };
 
-    // ── Don't render until we know the user is admin ──────────────────────────
     if (!profile?.is_admin) {
         return (
             <SafeAreaView style={adminStyles.safe}>
@@ -971,7 +1364,6 @@ export default function AdminScreen() {
         <SafeAreaView style={adminStyles.safe} edges={["top"]}>
             <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
-            {/* Header */}
             <View style={adminStyles.header}>
                 <TouchableOpacity style={adminStyles.backBtn} onPress={() => router.back()}>
                     <Ionicons name="arrow-back" size={20} color="#111827" />
@@ -986,7 +1378,6 @@ export default function AdminScreen() {
                 </View>
             </View>
 
-            {/* Tab bar */}
             <View style={adminStyles.tabBar}>
                 {TABS.map(tab => (
                     <TouchableOpacity
@@ -1006,10 +1397,10 @@ export default function AdminScreen() {
                 ))}
             </View>
 
-            {/* Tab content */}
             {activeTab === "Analytics" && <AnalyticsTab analytics={analytics} loading={loading} />}
             {activeTab === "Orders" && <OrdersTab orders={orders} loading={loading} onRefresh={handleRefresh} refreshing={refreshing} />}
-            {activeTab === "Products" && <ProductsTab products={products} loading={loading} onRefresh={handleRefresh} refreshing={refreshing} />}
+            {activeTab === "Products" && <ProductsTab products={products} categories={categories} loading={loading} onRefresh={handleRefresh} refreshing={refreshing} />}
+            {activeTab === "Categories" && <CategoriesTab categories={categories} loading={loading} onRefresh={handleRefresh} refreshing={refreshing} />}
             {activeTab === "Users" && <UsersTab users={users} loading={loading} onRefresh={handleRefresh} refreshing={refreshing} />}
             {activeTab === "Notify" && <NotifyTab users={users} />}
         </SafeAreaView>

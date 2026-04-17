@@ -7,10 +7,12 @@ import {
 import { useRouter } from "expo-router";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../lib/supabase";
+import { useBiometrics } from "../../hooks/useBiometrics";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const { width } = Dimensions.get("window");
 
-type Tab    = "login" | "signup";
+type Tab = "login" | "signup";
 type Method = "email" | "phone";
 
 // ── Tab bar ───────────────────────────────────────────────────────────────────
@@ -40,7 +42,7 @@ const Field = ({ label, placeholder, value, onChangeText, secureTextEntry, keybo
   secureTextEntry?: boolean; keyboardType?: any; autoCapitalize?: any; maxLength?: number;
 }) => {
   const [focused, setFocused] = useState(false);
-  const [show,    setShow]    = useState(false);
+  const [show, setShow] = useState(false);
   return (
     <View style={styles.fieldWrap}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -68,7 +70,7 @@ const Field = ({ label, placeholder, value, onChangeText, secureTextEntry, keybo
 // ── OTP boxes ─────────────────────────────────────────────────────────────────
 const OTPInput = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => {
   const inputRef = useRef<TextInput>(null);
-  const digits   = value.padEnd(6, " ").split("");
+  const digits = value.padEnd(6, " ").split("");
   return (
     <View style={styles.otpWrap}>
       <TextInput ref={inputRef} value={value} onChangeText={v => onChange(v.replace(/\D/g, "").slice(0, 6))} keyboardType="number-pad" maxLength={6} style={styles.otpHidden} caretHidden />
@@ -84,27 +86,65 @@ const OTPInput = ({ value, onChange }: { value: string; onChange: (v: string) =>
 // ── Screen ────────────────────────────────────────────────────────────────────
 export default function AuthScreen() {
   const router = useRouter();
-  const { signInWithEmail, signUpWithEmail } = useAuth();
+  const { signInWithEmail, signUpWithEmail, user } = useAuth();
+  const { isEnabled, authenticate, saveCredentials } = useBiometrics();
 
-  const [tab,           setTab]           = useState<Tab>("login");
-  const [method,        setMethod]        = useState<Method>("email");
-  const [otpStep,       setOtpStep]       = useState(false);
-  const [loading,       setLoading]       = useState(false);
+  const [tab, setTab] = useState<Tab>("login");
+  const [method, setMethod] = useState<Method>("email");
+  const [otpStep, setOtpStep] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [biometricChecking, setBiometricChecking] = useState(true);
 
   // Email fields
-  const [loginEmail,    setLoginEmail]    = useState("");
-  const [loginPass,     setLoginPass]     = useState("");
-  const [signupName,    setSignupName]    = useState("");
-  const [signupEmail,   setSignupEmail]   = useState("");
-  const [signupPass,    setSignupPass]    = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPass, setLoginPass] = useState("");
+  const [signupName, setSignupName] = useState("");
+  const [signupEmail, setSignupEmail] = useState("");
+  const [signupPass, setSignupPass] = useState("");
   const [signupConfirm, setSignupConfirm] = useState("");
 
   // Phone fields
-  const [phone,         setPhone]         = useState("");
-  const [otp,           setOtp]           = useState("");
-  const [otpTimer,      setOtpTimer]      = useState(0);
+  const [phone, setPhone] = useState("");
+  const [otp, setOtp] = useState("");
+  const [otpTimer, setOtpTimer] = useState(0);
 
   const fadeAnim = useRef(new Animated.Value(1)).current;
+
+  // ── Auto-biometric login on mount ────────────────────────────────────────
+  useEffect(() => {
+    const checkBiometricLogin = async () => {
+      try {
+        // If user is already authenticated, skip biometric prompt
+        if (user) {
+          setBiometricChecking(false);
+          return;
+        }
+
+        const biometricEnabled = await AsyncStorage.getItem("biometric_enabled");
+        if (biometricEnabled === "true") {
+          const result = await authenticate();
+          if (result.success) {
+            // Check if Supabase session still exists
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session) {
+              // User is logged in via persistent session, navigate to app
+              router.replace("/(tabs)");
+            } else {
+              // Session expired, clear biometric flag
+              await AsyncStorage.removeItem("biometric_enabled");
+              Alert.alert("Session Expired", "Please sign in again.");
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Biometric check error:", error);
+      } finally {
+        setBiometricChecking(false);
+      }
+    };
+
+    checkBiometricLogin();
+  }, []);
 
   useEffect(() => {
     if (otpTimer <= 0) return;
@@ -125,8 +165,17 @@ export default function AuthScreen() {
     if (!loginEmail || !loginPass) { Alert.alert("Missing fields", "Please fill in all fields."); return; }
     setLoading(true);
     const { error } = await signInWithEmail(loginEmail.trim(), loginPass);
+
+    if (error) {
+      setLoading(false);
+      Alert.alert("Sign in failed", error);
+      return;
+    }
+
+    // Save credentials for biometric login
+    await saveCredentials(loginEmail.trim(), loginPass);
+
     setLoading(false);
-    if (error) { Alert.alert("Sign in failed", error); return; }
     router.replace("/(tabs)");
   };
 
@@ -158,8 +207,17 @@ export default function AuthScreen() {
     if (otp.length !== 6) { Alert.alert("Invalid OTP", "Enter the 6-digit code."); return; }
     setLoading(true);
     const { error } = await supabase.auth.verifyOtp({ phone: phone.replace(/\s/g, ""), token: otp, type: "sms" });
+
+    if (error) {
+      setLoading(false);
+      Alert.alert("Verification failed", error.message);
+      return;
+    }
+
+    // Save phone for biometric (phone login doesn't store password, so we'll just enable biometric flag)
+    await AsyncStorage.setItem("biometric_enabled", "true");
+
     setLoading(false);
-    if (error) { Alert.alert("Verification failed", error.message); return; }
     router.replace("/(tabs)");
   };
 
@@ -171,6 +229,16 @@ export default function AuthScreen() {
 
   // ── Guest ────────────────────────────────────────────────────────────────
   const handleGuest = () => router.replace("/(tabs)");
+
+  // Show loading screen while checking biometrics
+  if (biometricChecking) {
+    return (
+      <View style={[styles.root, { justifyContent: "center", alignItems: "center" }]}>
+        <StatusBar barStyle="light-content" />
+        <Text style={{ color: "#fff", fontSize: 16 }}>Checking biometrics...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>
@@ -206,15 +274,17 @@ export default function AuthScreen() {
             {/* Email login */}
             {tab === "login" && method === "email" && (
               <View style={styles.form}>
-                <Field label="Email"    placeholder="you@example.com"  value={loginEmail} onChangeText={setLoginEmail} keyboardType="email-address" />
-                <Field label="Password" placeholder="Your password"    value={loginPass}  onChangeText={setLoginPass}  secureTextEntry />
+                <Field label="Email" placeholder="you@example.com" value={loginEmail} onChangeText={setLoginEmail} keyboardType="email-address" />
+                <Field label="Password" placeholder="Your password" value={loginPass} onChangeText={setLoginPass} secureTextEntry />
                 <TouchableOpacity style={styles.forgotBtn} onPress={() => Alert.alert("Reset password", "Enter your email and we'll send a reset link.", [
                   { text: "Cancel", style: "cancel" },
-                  { text: "Send", onPress: async () => {
-                    if (!loginEmail) { Alert.alert("Enter your email first"); return; }
-                    await supabase.auth.resetPasswordForEmail(loginEmail.trim());
-                    Alert.alert("Sent!", "Check your inbox for a password reset link.");
-                  }},
+                  {
+                    text: "Send", onPress: async () => {
+                      if (!loginEmail) { Alert.alert("Enter your email first"); return; }
+                      await supabase.auth.resetPasswordForEmail(loginEmail.trim());
+                      Alert.alert("Sent!", "Check your inbox for a password reset link.");
+                    }
+                  },
                 ])}>
                   <Text style={styles.forgotText}>Forgot password?</Text>
                 </TouchableOpacity>
@@ -227,9 +297,9 @@ export default function AuthScreen() {
             {/* Email signup */}
             {tab === "signup" && method === "email" && (
               <View style={styles.form}>
-                <Field label="Full Name"        placeholder="Kwame Asante"         value={signupName}    onChangeText={setSignupName}    autoCapitalize="words" />
-                <Field label="Email"            placeholder="you@example.com"      value={signupEmail}   onChangeText={setSignupEmail}   keyboardType="email-address" />
-                <Field label="Password"         placeholder="Min. 8 characters"    value={signupPass}    onChangeText={setSignupPass}    secureTextEntry />
+                <Field label="Full Name" placeholder="Kwame Asante" value={signupName} onChangeText={setSignupName} autoCapitalize="words" />
+                <Field label="Email" placeholder="you@example.com" value={signupEmail} onChangeText={setSignupEmail} keyboardType="email-address" />
+                <Field label="Password" placeholder="Min. 8 characters" value={signupPass} onChangeText={setSignupPass} secureTextEntry />
                 <Field label="Confirm Password" placeholder="Repeat your password" value={signupConfirm} onChangeText={setSignupConfirm} secureTextEntry />
                 <Text style={styles.termsText}>
                   By signing up you agree to our <Text style={styles.termsLink}>Terms of Service</Text> and <Text style={styles.termsLink}>Privacy Policy</Text>.
