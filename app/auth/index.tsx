@@ -86,7 +86,7 @@ const OTPInput = ({ value, onChange }: { value: string; onChange: (v: string) =>
 // ── Screen ────────────────────────────────────────────────────────────────────
 export default function AuthScreen() {
   const router = useRouter();
-  const { signInWithEmail, signUpWithEmail, user } = useAuth();
+  const { signInWithEmail, signUpWithEmail, user, continueAsGuest } = useAuth();
   const { isEnabled, authenticate, saveCredentials } = useBiometrics();
 
   const [tab, setTab] = useState<Tab>("login");
@@ -228,7 +228,10 @@ export default function AuthScreen() {
   };
 
   // ── Guest ────────────────────────────────────────────────────────────────
-  const handleGuest = () => router.replace("/(tabs)");
+  const handleGuest = () => {
+    continueAsGuest();
+    router.replace("/(tabs)");
+  };
 
   // Show loading screen while checking biometrics
   if (biometricChecking) {

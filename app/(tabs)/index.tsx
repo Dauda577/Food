@@ -13,6 +13,7 @@ import { useCart } from "../../context/CartContext";
 import { useAuth } from "../../context/AuthContext";
 import { useLocale } from "../../context/LocaleContext";
 import { ProductGridSkeleton, BannerSkeleton, CategoryPillsSkeleton } from "../../components/Skeletons";
+import Footer from "../../components/Footer";
 
 const { width } = Dimensions.get("window");
 const CARD_WIDTH = (width - 48) / 2;
@@ -368,6 +369,8 @@ export default function HomeScreen() {
             </View>
           )}
         </View>
+
+        <Footer />
       </Animated.ScrollView>
     </SafeAreaView>
   );

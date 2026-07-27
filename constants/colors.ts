@@ -9,7 +9,7 @@
 // Color system constants
 export const COLORS = {
   // Primary colors
-  primary:   "#FF6A00", // Orange — CTAs, active states, accents, badges
+  primary:   "#7C3AED", // Purple — CTAs, active states, accents, badges
   secondary: "#2563EB", // Blue   — links, info states
   success:   "#16A34A", // Green  — confirmations, "New" badge
   error:     "#DC2626", // Red    — errors, sale badges, destructive actions
@@ -23,7 +23,7 @@ export const COLORS = {
   surface:        "#FFFFFF", // Cards, modals, inputs
 
   // Additional tokens for consistency
-  accent:          "#FF6A00", // Alias for primary (stars, highlights)
+  accent:          "#7C3AED", // Alias for primary (stars, highlights)
   cardBackground:  "#FFFFFF",
   inputBackground: "#F9FAFB",
   buttonSecondary: "#F3F4F6", // Secondary button fill
@@ -35,7 +35,7 @@ export const COLORS = {
   info:    "#2563EB", // Same as secondary — info banners
 
   // Light tint backgrounds (for badges, pills, notifications)
-  primaryLight:   "#FFF7ED", // Light orange
+  primaryLight:   "#F5F3FF", // Light purple
   secondaryLight: "#EFF6FF", // Light blue
   successLight:   "#F0FDF4", // Light green
   errorLight:     "#FEF2F2", // Light red

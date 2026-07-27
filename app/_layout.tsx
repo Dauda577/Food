@@ -10,7 +10,7 @@ import SplashScreen from "../components/SplashScreen";
 
 // ── Auth guard ────────────────────────────────────────────────────────────────
 function AuthGuard() {
-  const { session, loading } = useAuth();
+  const { session, loading, isGuest } = useAuth();
   const router = useRouter();
   const segments = useSegments();
 
@@ -18,13 +18,14 @@ function AuthGuard() {
     if (loading) return;
     const inAuth = segments[0] === "auth";
     const inOnboarding = segments[0] === "onboarding";
+    const authenticated = session || isGuest;
 
-    if (!session && !inAuth && !inOnboarding) {
+    if (!authenticated && !inAuth && !inOnboarding) {
       router.replace("/auth");
-    } else if (session && (inAuth || inOnboarding)) {
+    } else if (authenticated && (inAuth || inOnboarding)) {
       router.replace("/(tabs)");
     }
-  }, [session, loading, segments]);
+  }, [session, loading, segments, isGuest]);
 
   return null;
 }

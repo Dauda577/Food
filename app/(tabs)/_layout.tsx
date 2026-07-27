@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { View, Text, StyleSheet, Platform, useWindowDimensions } from "react-native";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { useCart } from "../../context/CartContext";
+import { COLORS } from "../../constants/colors";
 
 // ── Cart icon with badge ──────────────────────────────────────────────────────
 function CartIcon({ color, focused }: { color: string; focused: boolean }) {
@@ -60,7 +61,7 @@ export default function TabsLayout() {
       <Tabs
         screenOptions={{
           headerShown: false,
-          tabBarActiveTintColor: "#f97316",
+          tabBarActiveTintColor: COLORS.primary,
           tabBarInactiveTintColor: "#9ca3af",
           // Hide tab bar on desktop
           tabBarStyle: isDesktop ? { display: "none" } : styles.tabBar,
@@ -182,7 +183,7 @@ const styles = StyleSheet.create({
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: "#f97316",
+    backgroundColor: COLORS.primary,
     marginTop: 1,
   },
   // Cart badge

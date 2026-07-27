@@ -14,10 +14,12 @@ type AuthContextType = {
   user: User | null;
   profile: Profile | null;
   loading: boolean;
+  isGuest: boolean;
   signInWithEmail: (email: string, password: string) => Promise<{ error: string | null }>;
   signUpWithEmail: (email: string, password: string, name: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   updateProfile: (data: Partial<Profile>) => Promise<{ error: string | null }>;
+  continueAsGuest: () => void;
 };
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -27,6 +29,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user,    setUser]    = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isGuest, setIsGuest] = useState(false);
 
   // Fetch profile from DB
   const fetchProfile = async (userId: string) => {
@@ -78,10 +81,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     return { error: null };
   };
 
+  // Continue as guest
+  const continueAsGuest = () => {
+    setIsGuest(true);
+  };
+
   // Sign out
   const signOut = async () => {
     await supabase.auth.signOut();
     setProfile(null);
+    setIsGuest(false);
   };
 
   // Update profile
@@ -97,8 +106,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <AuthContext.Provider value={{
-      session, user, profile, loading,
-      signInWithEmail, signUpWithEmail, signOut, updateProfile,
+      session, user, profile, loading, isGuest,
+      signInWithEmail, signUpWithEmail, signOut, updateProfile, continueAsGuest,
     }}>
       {children}
     </AuthContext.Provider>
